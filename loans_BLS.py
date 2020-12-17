@@ -15,6 +15,8 @@ import numpy as np
 NEstates = ['CT','MA','ME','NH','RI','VT']
 NEstfips = ['09','25','23','33','44','50']
 
+naics = 'NAICS3'  # or 'NAICS2'
+
 def OverrideNAICS2(df):
     # adjusts 2-digit NAICS that are joint, e.g. NAICS 31-33 Manufacturing
     df.loc[df['NAICS2'].eq('31'),'NAICS2'] = '31-33'
@@ -38,8 +40,11 @@ for csv_file in csv_files:
     list_df.append(df)
 
 df = pd.concat(list_df)
-df = df.assign( NAICS2 = df.NAICSCode.str.slice(start=0, stop=2))
-
+if (naics == 'NAICS2'):
+    df = df.assign( NAICS2 = df.NAICSCode.str.slice(start=0, stop=2))
+else:
+    df = df.assign( NAICS3 = df.NAICSCode.str.slice(start=0, stop=3))
+    
 # keep loan data for New England only
 loansNE = df[df.Zip.notna() & df.State.isin(NEstates)
              & ~df.NAICSCode.isna()]   # only non-empty NAICS codes
@@ -58,14 +63,14 @@ loans = loansNE[~loansNE.BusinessType.isin(soleprop)]
 # Join County info into each loan 
 # ZIPcode to County Code crosswalk from https://www.huduser.gov/portal/datasets/usps_crosswalk.html#data
 zipcounty = pd.read_excel('/Users/aligo/Downloads/FEMA recovery data/ZIP_COUNTY_092020.xlsx'
-           , usecols=['ZIP','COUNTY']
-           , dtype={'ZIP':'object','COUNTY':'object'})
+                          , engine='openpyxl', usecols=['ZIP','COUNTY']
+                          , dtype={'ZIP':'object','COUNTY':'object'})
 zipcounty = zipcounty.drop_duplicates(subset='ZIP', keep="first")
 
 # County code to county name crosswalk
 fpath = 'https://www2.census.gov/programs-surveys/popest/geographies/2018/all-geocodes-v2018.xlsx'
-countyfips = pd.read_excel(fpath, skiprows=range(4), header=0, dtype={
-                'State Code (FIPS)':'object', 'County Code (FIPS)':'object'})
+countyfips = pd.read_excel(fpath, engine='openpyxl', skiprows=range(4), header=0
+            , dtype={'State Code (FIPS)':'object', 'County Code (FIPS)':'object'})
 countyfips = countyfips[countyfips['Summary Level'].eq(50) &   # keep county entries
                         countyfips['State Code (FIPS)'].isin(NEstfips)]   # keep NE 
 countyfips = countyfips.assign( COUNTY=countyfips['State Code (FIPS)']+
@@ -80,11 +85,12 @@ zipcounty.columns=['COUNTYfips','index','Zip','State','COUNTYName']
 zipcounty = zipcounty[['Zip','State','COUNTYfips','COUNTYName']].set_index('Zip')
 
 loansc = loans.join(zipcounty['COUNTYfips']).reset_index() # loans with County fips and name
-# adjusts 2-digit NAICS that are joint, e.g. NAICS 31-33 Manufacturing
-loansc = OverrideNAICS2(loansc)
+if (naics == 'NAICS2'):
+    # adjusts 2-digit NAICS that are joint, e.g. NAICS 31-33 Manufacturing
+    loansc = OverrideNAICS2(loansc)
 
-# Number of loans per county and NAICS2
-loansum = loansc.groupby(['COUNTYfips','NAICS2']).agg({'Zip':'count'
+# Number of loans per county and NAICS sector
+loansum = loansc.groupby(['COUNTYfips',naics]).agg({'Zip':'count'
                                 ,'LoanAmount':'sum', 'JobsReported':'sum'})
 loansum.columns=['NLoans','TotLoanAmount','TotJobsReported']
 
@@ -93,19 +99,25 @@ loansum.columns=['NLoans','TotLoanAmount','TotJobsReported']
 fpath = '/Users/aligo/Downloads/FEMA recovery data/'
 zf = zipfile.ZipFile( fpath + '2020_qtrly_singlefile.zip') 
 qcew = pd.read_csv(zf.open('2020.q1-q2.singlefile.csv'), dtype={'area_fips':'object'})
-cnt = qcew[qcew.own_code.eq(5) & qcew.qtr.eq(1)  # private, FIRST quarter only
-        & (qcew['industry_code'].str.len().eq(2)   # 2-digit NAICS
-           | qcew['industry_code'].str.match('\d\d-\d\d'))    # 2-digit NAICS that are joint, e.g. NAICS 31-33 Manufacturing
-        & ~qcew['industry_code'].eq('10')      # exclude code = 10 that are "ALL Naics" totals
-        & qcew['area_fips'].isin(countyfips['COUNTY'].tolist())]  # New England counties
+# filter
+idx = (qcew.own_code.eq(5) & qcew.qtr.eq(1) & # private, FIRST quarter only
+         qcew['area_fips'].isin(countyfips['COUNTY'].tolist()))   # NE only
+if (naics == 'NAICS2'):
+    idx = idx & ((qcew['industry_code'].str.len().eq(2)   # 2-digit NAICS
+            | qcew['industry_code'].str.match('\d\d-\d\d'))    # 2-digit NAICS that are joint, e.g. NAICS 31-33 Manufacturing
+          & ~qcew['industry_code'].eq('10') )      # exclude code = 10 that are "ALL Naics" totals
+else:
+    idx = idx & (qcew['industry_code'].str.len().eq(3)   # 3-digit NAICS
+          & ~qcew['industry_code'].str.startswith('10') )      # exclude code = 10 that are "ALL Naics" totals
+    
+cnt = qcew[idx]  # New England counties
 cnt = cnt[['area_fips','industry_code','qtrly_estabs']].set_index('area_fips')
 # Add state and county name
 cnt = cnt.join(countyfips.set_index('COUNTY'))
-
 # Join Total Num businesses + Num of loans
 cnt = cnt.reset_index()
-cnt.columns = ['COUNTYfips','NAICS2','NEstabs','State','COUNTYName']
-cnt = cnt.set_index(['COUNTYfips','NAICS2'])
+cnt.columns = ['COUNTYfips',naics,'NEstabs','State','COUNTYName']
+cnt = cnt.set_index(['COUNTYfips',naics])
 pen = cnt.join(loansum, rsuffix='loan')
 pen = pen.assign(penetration = pen['NLoans']/pen['NEstabs']
                  , AvgLoanAmount = pen['TotLoanAmount']/pen['NLoans']
@@ -116,12 +128,17 @@ pen = pen.assign(penetration = pen['NLoans']/pen['NEstabs']
 # naics codes downloaded from https://data.bls.gov/cew/doc/titles/industry/industry_titles.csv
 fpath = '/Users/aligo/git-repos/FEMA/BLS_data/'
 dfnaics = pd.read_csv(fpath + 'industry_titles.csv')
-dfnaics = dfnaics[dfnaics['industry_code'].str.len().eq(2)
-            | dfnaics['industry_code'].str.contains('^[0-9][0-9]-[0-9][0-9]')]
-dfnaics['industry_title'] = dfnaics['industry_title'].str.replace('^NAICS \d\d ',''
+
+if (naics == 'NAICS2'):
+    idx = (dfnaics['industry_code'].str.len().eq(2)
+            | dfnaics['industry_code'].str.contains('^[0-9][0-9]-[0-9][0-9]'))
+else:
+    idx = dfnaics['industry_code'].str.len().eq(3)
+dfnaics = dfnaics[idx]
+dfnaics['industry_title'] = dfnaics['industry_title'].str.replace('^NAICS \d+ ',''
                                         ).str.replace('^NAICS \d\d-\d\d ','')
-dfnaics.columns = ['NAICS2','NAICSdescr']
-pen = pen.reset_index().set_index('NAICS2').join(dfnaics.set_index('NAICS2')).reset_index()
+dfnaics.columns = [naics,'NAICSdescr']
+pen = pen.reset_index().set_index(naics).join(dfnaics.set_index(naics)).reset_index()
 
 # SAVE 
 fpath = '/Users/aligo/Downloads/FEMA recovery data/PPP_loans_from_SBA/'
@@ -132,8 +149,8 @@ pen = pen.replace([np.inf, -np.inf], np.nan)  # entries with loans but no establ
 #pen[['State','COUNTYfips','COUNTYName','NAICS3','NAICSdescr'
 #     ,'NEstabs','NLoans','penetration']].to_csv(fpath + 'PPPpenetration.csv')
 
-with pd.ExcelWriter(fpath + 'PPPpenetrationBLS.xlsx') as writer:
-    pen[['State','COUNTYfips','COUNTYName','NAICS2','NAICSdescr','NEstabs','NLoans'
+with pd.ExcelWriter(fpath + 'PPPpenetrationBLS_' + naics + '.xlsx') as writer:
+    pen[['State','COUNTYfips','COUNTYName',naics,'NAICSdescr','NEstabs','NLoans'
               ,'penetration','AvgLoanAmount','AvgJobsReported','LoanAmtperEmp']
                             ].to_excel(writer, sheet_name='PPP', index=False)
 
@@ -161,7 +178,7 @@ ggplot(dfc, aes(x='reorder(COUNTYName,penetration)', y='penetration')
           ) + coord_flip()
 
 # total per NAICS
-dfp = pen.groupby(['NAICS2','NAICSdescr']).agg('sum').reset_index()
+dfp = pen.groupby([naics,'NAICSdescr']).agg('sum').reset_index()
 dfp['penetration'] = dfp['NLoans'] / dfp['NEstabs']
 
 ggplot(dfp, aes(x='reorder(NAICSdescr,penetration)', y='penetration')
@@ -169,6 +186,14 @@ ggplot(dfp, aes(x='reorder(NAICSdescr,penetration)', y='penetration')
           ) + xlab('NAICS 2 Digit Sector'
           ) + ylab('PPP Loan Penetration'
           ) + ggtitle('New England PPP Penetrations per NAICS Sector'
+#          ) + scale_y_continuous(trans = 'log2'
+          ) + coord_flip()
+
+ggplot(dfp[dfp['penetration'].gt(1)], aes(x='reorder(NAICSdescr,penetration)', y='penetration')
+          ) + geom_bar(stat="identity"
+          ) + xlab(naics + ' Sector'
+          ) + ylab('PPP Loan Penetration'
+          ) + ggtitle('New England PPP Penetrations > 1 per NAICS Sector'
 #          ) + scale_y_continuous(trans = 'log2'
           ) + coord_flip()
                                    

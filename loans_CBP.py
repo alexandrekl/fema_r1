@@ -61,14 +61,14 @@ loans = loansNE #[~loansNE.BusinessType.isin(soleprop)]
 # Join County info into each loan 
 # ZIPcode to County Code crosswalk from https://www.huduser.gov/portal/datasets/usps_crosswalk.html#data
 zipcounty = pd.read_excel('/Users/aligo/Downloads/FEMA recovery data/ZIP_COUNTY_092020.xlsx'
-           , usecols=['ZIP','COUNTY']
+           , engine='openpyxl', usecols=['ZIP','COUNTY']
            , dtype={'ZIP':'object','COUNTY':'object'})
 zipcounty = zipcounty.drop_duplicates(subset='ZIP', keep="first")
 
 # County FIPS to county name crosswalk
 fpath = 'https://www2.census.gov/programs-surveys/popest/geographies/2018/all-geocodes-v2018.xlsx'
-countyfips = pd.read_excel(fpath, skiprows=range(4), header=0, dtype={
-                'State Code (FIPS)':'object', 'County Code (FIPS)':'object'})
+countyfips = pd.read_excel(fpath, engine='openpyxl', skiprows=range(4), header=0
+            , dtype={'State Code (FIPS)':'object', 'County Code (FIPS)':'object'})
 countyfips = countyfips[countyfips['Summary Level'].eq(50) &   # keep county entries
                         countyfips['State Code (FIPS)'].isin(NEstfips)]   # keep NE 
 countyfips = countyfips.assign( COUNTY=countyfips['State Code (FIPS)']+
