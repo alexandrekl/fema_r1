@@ -48,12 +48,24 @@ else:
 # keep loan data for New England only
 loansNE = df[df.Zip.notna() & df.State.isin(NEstates)
              & ~df.NAICSCode.isna()]   # only non-empty NAICS codes
+#fpath = '/Users/aligo/Downloads/FEMA recovery data/PPP_loans_from_SBA/'
+#loansNE.to_csv(fpath + 'PPP_loans_NEWENGLAND.csv')
 loansNE = loansNE.set_index('Zip')
 
-# list business types
-biztypes = loansNE.groupby('BusinessType').agg('count')
-print(biztypes.City)
-print(biztypes.City.sum())
+# list and save Loans' business types 
+totLoans = loansNE.shape[0]
+totAmnt = loansNE['LoanAmount'].sum()
+print('Total Number of PPP loans to New England with valid NAICS and Zipcode: ' + str(totLoans))
+print('Total PPP loan Amount to New England with valid NAICS and Zipcode: ' + str(totAmnt))
+biztypes = loansNE.groupby('BusinessType').agg({'State':'count','LoanAmount':'sum'})
+idx = loansNE['BusinessType'].isna()
+biztypes.loc['UNKNOWN'] = [idx.sum(), loansNE.loc[idx,'LoanAmount'].sum()]
+biztypes['NLoansPercent'] = biztypes['State'] / totLoans
+biztypes['LoanAmtPercent'] = biztypes['LoanAmount'] / totAmnt
+fpath = '/Users/aligo/Downloads/FEMA recovery data/PPP_loans_from_SBA/'
+with pd.ExcelWriter(fpath + 'PPP_business_types.xlsx') as writer:
+    biztypes[['NLoansPercent','LoanAmtPercent']].to_excel(writer, sheet_name='PPP'
+                                                                 , index=True)
 
 # Exclude loans to sole proprietors, contractors etc
 soleprop = ['Independent Contractors' #,'Self-Employed Individuals'
