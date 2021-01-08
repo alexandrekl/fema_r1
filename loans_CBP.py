@@ -7,6 +7,8 @@ v3 version is to work
 @author: aligo
 """
 
+import loans_common
+
 import glob
 import pandas as pd
 import zipfile
@@ -15,48 +17,9 @@ from io import BytesIO
 from urllib.request import urlopen
 import numpy as np
 
-NEstates = ['CT','MA','ME','NH','RI','VT']
-NEstfips = ['09','25','23','33','44','50']
+naics = 'NAICS2'
 
-def OverrideNAICS2(df):
-    # adjusts 2-digit NAICS that are joint, e.g. NAICS 31-33 Manufacturing
-    df.loc[df['NAICS2'].eq('31'),'NAICS2'] = '31-33'
-    df.loc[df['NAICS2'].eq('33'),'NAICS2'] = '31-33'
-    df.loc[df['NAICS2'].eq('44'),'NAICS2'] = '44-45' # NAICS 44-45 Retail trade
-    df.loc[df['NAICS2'].eq('45'),'NAICS2'] = '44-45' # NAICS 44-45 Retail trade
-    df.loc[df['NAICS2'].eq('48'),'NAICS2'] = '48-49' # 	NAICS 48-49 Transportation and warehousing
-    df.loc[df['NAICS2'].eq('49'),'NAICS2'] = '48-49' # 	NAICS 48-49 Transportation and warehousing
-    return df
-
-# read PPP loan data
-fpath = '/Users/aligo/Downloads/FEMA recovery data/PPP_loans_from_SBA/120120 Paycheck Protection Program Data/'
-
-csv_files = glob.glob(fpath + '*.csv')
-
-list_df = []
-for csv_file in csv_files:
-    print(csv_file)
-    df = pd.read_csv(csv_file, dtype={'Zip':'object', 'NAICSCode':'object'})
-    # do df manipulations
-    list_df.append(df)
-
-df = pd.concat(list_df)
-df = df.assign( NAICS2 = df.NAICSCode.str.slice(start=0, stop=2))
-
-# keep loan data for New England only
-loansNE = df[df.Zip.notna() & df.State.isin(NEstates)
-             & ~df.NAICSCode.isna()]   # only non-empty NAICS codes
-loansNE = loansNE.set_index('Zip')
-
-# list business types
-biztypes = loansNE.groupby('BusinessType').agg('count')
-print(biztypes.City)
-print(biztypes.City.sum())
-
-# Exclude loans to sole proprietors, contractors etc
-#soleprop = ['Independent Contractors' #,'Self-Employed Individuals'
-#            ,'Sole Proprietorship', 'Tenant in Common']
-loans = loansNE #[~loansNE.BusinessType.isin(soleprop)]
+loans = loans_common.ReadPPPdata(naics)
 
 # Join County info into each loan 
 # ZIPcode to County Code crosswalk from https://www.huduser.gov/portal/datasets/usps_crosswalk.html#data
