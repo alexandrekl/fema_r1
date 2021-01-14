@@ -7,53 +7,24 @@ v3 version is to work
 @author: aligo
 """
 
-import loans_common
+import loans_common as co
 
-import glob
 import pandas as pd
 import zipfile
 from plotnine import *    # python lib to use ggplot
 from io import BytesIO
 from urllib.request import urlopen
-import numpy as np
 
 naics = 'NAICS2'
+excsole = False
 
-loans = loans_common.ReadPPPdata(naics)
-
-# Join County info into each loan 
-# ZIPcode to County Code crosswalk from https://www.huduser.gov/portal/datasets/usps_crosswalk.html#data
-zipcounty = pd.read_excel('/Users/aligo/Downloads/FEMA recovery data/ZIP_COUNTY_092020.xlsx'
-           , engine='openpyxl', usecols=['ZIP','COUNTY']
-           , dtype={'ZIP':'object','COUNTY':'object'})
-zipcounty = zipcounty.drop_duplicates(subset='ZIP', keep="first")
-
-# County FIPS to county name crosswalk
-fpath = 'https://www2.census.gov/programs-surveys/popest/geographies/2018/all-geocodes-v2018.xlsx'
-countyfips = pd.read_excel(fpath, engine='openpyxl', skiprows=range(4), header=0
-            , dtype={'State Code (FIPS)':'object', 'County Code (FIPS)':'object'})
-countyfips = countyfips[countyfips['Summary Level'].eq(50) &   # keep county entries
-                        countyfips['State Code (FIPS)'].isin(NEstfips)]   # keep NE 
-countyfips = countyfips.assign( COUNTY=countyfips['State Code (FIPS)']+
-                                       countyfips['County Code (FIPS)'])
-countyfips = countyfips.replace({'State Code (FIPS)': 
-                    {NEstfips[i]: NEstates[i] for i in range(len(NEstfips))}})
-countyfips = countyfips[['COUNTY','State Code (FIPS)','Area Name (including legal/statistical area description)']]
-countyfips.columns=['COUNTY','State','COUNTYName']
-# Note the INNER join below - will keep only the zipcodes in New England
-zipcounty = zipcounty[['ZIP','COUNTY']].reset_index().set_index('COUNTY').join(
-                                countyfips.set_index('COUNTY'),how='inner').reset_index()
-zipcounty.columns=['COUNTYfips','index','Zip','State','COUNTYName']
-zipcounty = zipcounty[['Zip','State','COUNTYfips','COUNTYName']].set_index('Zip')
-
-loansc = loans.join(zipcounty['COUNTYfips']).reset_index() # loans with County fips and name
-# adjusts 2-digit NAICS that are joint, e.g. NAICS 31-33 Manufacturing
-loansc = OverrideNAICS2(loansc)
+loans = co.ReadPPPdata(naics)
 
 # Number of loans per county and NAICS2
-loansum = loansc.groupby(['COUNTYfips','NAICS2']).agg({'Zip':'count'
-                                ,'LoanAmount':'sum', 'JobsReported':'sum'})
-loansum.columns=['NLoans','TotLoanAmount','TotJobsReported']
+[loans_y, countyfips] = co.MatchCounties(loans, excsole, naics)
+
+# EXECUTE THIS COMMAND ONLY AFTER CHECKING THE EXCEL FILE OF UNMATCHED LOANS in Downloads/
+loansum = co.AddManualCounties(loans_y, excsole, naics)
 
 # TOTAL NUMBER OF BUSINESSES - from US Census CBP
 url = urlopen("https://www2.census.gov/programs-surveys/cbp/datasets/2018/cbp18co.zip")
@@ -63,7 +34,7 @@ cbp = pd.read_csv(zipfile.open('cbp18co.txt'), na_values='N')
 
 cbp['FIPST'] = cbp['fipstate'].astype(str).str.pad(2,fillchar='0')
 cbp['area_fips'] = cbp['FIPST'] + cbp['fipscty'].astype(str).str.pad(3,fillchar='0')
-cnt = cbp[cbp['FIPST'].isin(NEstfips)    # New England counties
+cnt = cbp[cbp['FIPST'].isin(co.NEstfips)    # New England counties
           & ~cbp['fipscty'].eq(999)      # exclude fipscty = 999 that are "statewide" totals
           & cbp['naics'].str.contains('^[0-9][0-9]----',regex=True)]    # 2-digit NAICS codes
 cnt = cnt.assign( industry_code = cnt['naics'].str.slice(start=0,stop=2) )    # 2-digit NAICS codes, cleaned
@@ -77,48 +48,9 @@ cnt = cnt.join(countyfips.set_index('COUNTY'))
 cnt = cnt.reset_index()
 cnt.columns = ['COUNTYfips','NAICS2','NEstabs','State','COUNTYName']
 # adjusts 2-digit NAICS that are joint, e.g. NAICS 31-33 Manufacturing
-cnt = OverrideNAICS2(cnt)
-cnt = cnt.set_index(['COUNTYfips','NAICS2'])
-pen = cnt.join(loansum, rsuffix='loan')
-pen = pen.assign(penetration = pen['NLoans']/pen['NEstabs']
-                 , AvgLoanAmount = pen['TotLoanAmount']/pen['NLoans']
-                 , AvgJobsReported = pen['TotJobsReported']/pen['NLoans']
-                 , LoanAmtperEmp = pen['TotLoanAmount']/pen['TotJobsReported'])
+cnt = co.OverrideNAICS2(cnt)
 
-# Add NAICS descriptions
-# naics codes downloaded from https://data.bls.gov/cew/doc/titles/industry/industry_titles.csv
-fpath = '/Users/aligo/git-repos/FEMA/BLS_data/'
-dfnaics = pd.read_csv(fpath + 'industry_titles.csv')
-dfnaics = dfnaics[dfnaics['industry_code'].str.len().eq(2)
-            | dfnaics['industry_code'].str.contains('^[0-9][0-9]-[0-9][0-9]')]
-dfnaics['industry_title'] = dfnaics['industry_title'].str.replace('^NAICS \d\d ',''
-                                        ).str.replace('^NAICS \d\d-\d\d ','')
-dfnaics.columns = ['NAICS2','NAICSdescr']
-pen = pen.reset_index().set_index('NAICS2').join(dfnaics.set_index('NAICS2')).reset_index()
-
-# SAVE 
-fpath = '/Users/aligo/Downloads/FEMA recovery data/PPP_loans_from_SBA/'
-idx = pen['NLoans'].isna()
-pen.loc[idx,'NLoans'] = 0   # entries with no loans
-pen.loc[idx,'penetration'] = 0
-pen = pen.replace([np.inf, -np.inf], np.nan)  # entries with loans but no establishments
-#pen[['State','COUNTYfips','COUNTYName','NAICS2','NAICSdescr'
-#     ,'NEstabs','NLoans','penetration']].to_csv(fpath + 'PPPpenetration.csv')
-
-with pd.ExcelWriter(fpath + 'PPPpenetrationCBP.xlsx') as writer:
-    pen[['State','COUNTYfips','COUNTYName','NAICS2','NAICSdescr','NEstabs','NLoans'
-              ,'penetration','AvgLoanAmount','AvgJobsReported','LoanAmtperEmp']
-                            ].to_excel(writer, sheet_name='PPP', index=False)
-
-# Summaries
-print('Total Number of PPP loans to New England with valid NAICS: ' + str(loansNE.shape[0]))
-print('Previous Number excluding loans with missing info: ' 
-                                                  + str(pen['NLoans'].sum()))
-print('Census CBP Total Count of businesses in NE: ' + str(pen['NEstabs'].sum()))
-print('Total Number of County-NAICS pairs in NE with existing businesses: ' 
-                                                  + str(pen.shape[0]))
-print('Previous Number with penetration > 1: ' + str(sum(pen['penetration'].gt(1))))
-print('Previous Number with penetration = 0: ' + str(sum(pen['penetration'].isna())))
+pen = co.CalcPenetration(loansum, cnt, naics)
 
 # total per county 
 dfc = pen.groupby(['COUNTYName']).agg('sum').reset_index()
