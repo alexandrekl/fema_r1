@@ -2,9 +2,8 @@
 library(dplyr)
 library(openxlsx)
 
-latest_forecast_date <- '2021-01-11'
-
 NEstfips <- c('09','25','23','33','44','50', '36') # FIPS of states in New England + NY
+#hrrnums <- c(109,110,111,221,222,227,230,231,281,282,295,364,424)
 
 # truth URL from the CDC ensemble 
 turl <- 'https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv'
@@ -20,8 +19,20 @@ tmp <- latest_history_date - min(ens_hist$date)
 npastdays <- tmp[[1]] + 1
   
 # read URL of CDC ensemble forecasts per county
-eurl <- paste0('https://github.com/reichlab/covid19-forecast-hub/raw/master/data-processed/COVIDhub-ensemble/' 
-                                          , latest_forecast_date, '-COVIDhub-ensemble.csv')
+d <- Sys.Date() # today's date
+repeat {
+  s <- as.character(d, '%Y-%m-%d')
+  eurl <- paste0('https://github.com/reichlab/covid19-forecast-hub/raw/master/data-processed/COVIDhub-ensemble/' 
+                 , s, '-COVIDhub-ensemble.csv')
+  if ( RCurl::url.exists(eurl, .header = FALSE) ){
+    latest_forecast_date <- s
+    print( paste0('FOUND latest_forecast_date: ', latest_forecast_date) )
+    break
+  }
+  print( paste0('Checked forecast for ', s) )
+  d <- d - 1
+}
+
 df <- read.table( eurl, sep = ',', header = T ) # fields are explained in https://github.com/reichlab/covid19-forecast-hub/blob/master/data-processed/README.md#quantile
 
 # N wk ahead inc case
@@ -38,40 +49,20 @@ ens_fcst <- df %>%
 nforecasts <- length(unique(ens_fcst$target))
   
 # build county to HRR crosswalk data, to assign forecasts from counties to HRRs based on population
-tmp <- tempfile()
-download.file('https://atlasdata.dartmouth.edu/downloads/geography/ZipHsaHrr18.csv.zip',tmp)
-ziphrr <- read.table( unz(tmp, 'ZipHsaHrr18.csv'), sep=',', quote="", header=T, colClasses='character' )
-unlink(tmp)
-# New england HRRs
-ziphrrne <- ziphrr %>% filter( hrrnum %in% c(109,110,111,221,222,227,230,231,281,282,295,364,424))
-# ZIPcode to County Code crosswalk from https://www.huduser.gov/portal/datasets/usps_crosswalk.html#data
-tmp <- readxl::read_xlsx('/Users/aligo/Downloads/FEMA recovery data/ZIP_COUNTY_092020.xlsx', col_types=c('text')) %>%
-              mutate( RES_RATIO=as.numeric(RES_RATIO), BUS_RATIO=as.numeric(BUS_RATIO)
-                      , OTH_RATIO=as.numeric(OTH_RATIO), TOT_RATIO=as.numeric(TOT_RATIO) ) # %>%
-#  group_by(ZIP) %>% mutate( ratio=max(TOT_RATIO) ) %>% ungroup()
-zipcounty <- tmp #%>% filter( ratio == TOT_RATIO ) # keep county with biggest ratio of all addresses in the ZIP–County to the total number of all addresses in the entire ZIP.
-#zip/county/hrr
-zipctyhrr <- inner_join(ziphrrne, select(zipcounty,ZIP,COUNTY,TOT_RATIO), by=c('zipcode18'='ZIP'))
-countylst <- unique(zipctyhrr$COUNTY)
-#add zipcode population
-zipop <- read.table( unz('/Users/aligo/Downloads/FEMA recovery data/ACSST5Y2019.S0101_2020-12-30T143736.zip'
-                         , 'ACSST5Y2019.S0101_data_with_overlays_2020-12-30T143117.csv'), sep=',', skip=2 ) %>%
-  mutate( ZIP=substr(V2, 7, 12), ZIPOP=V3 )
-zip_cty_hrr_pop <- left_join(zipctyhrr, select(zipop, ZIP, ZIPOP), by=c('zipcode18'='ZIP'))
-zip_cty_hrr_pop$ZIPOP[is.na(zip_cty_hrr_pop$ZIPOP)] <- 0
-
-# population by county,HRR
-sumpopctyhrr <- zip_cty_hrr_pop %>% ungroup() %>%
-              group_by(hrrcity,COUNTY) %>% summarise( pop = sum(ZIPOP*TOT_RATIO) )
-hrrcities <- unique( sumpopctyhrr$hrrcity )
-# population by county
-sumpopcty <- zip_cty_hrr_pop %>% ungroup() %>%
-              group_by(COUNTY) %>% summarise( pop = sum(ZIPOP*TOT_RATIO) )
-
-CasesofCountythatareinHRR <- function(countyi, hrrcityi, ensemble){
-  # forecast of county countyi that are within HRR hrrcityi
+# crosswalk obtained from https://mcdc.missouri.edu/applications/geocorr2014.html
+fname <- '/Users/aligo/Downloads/FEMA recovery data/geocorr2014.csv'
+colnames <- read.csv( fname, nrows=1 ) 
+countyhrr <- read.csv( fname, skip=1 ) 
+names(countyhrr) <- names(colnames) 
+countyhrr <- countyhrr %>% mutate( COUNTYfips = sprintf("%05d", county) )
   
-  casescty <- ensemble %>% filter( location==countyi ) # county forecast
+countyfipslst <- unique(countyhrr$COUNTYfips)
+hrrnamelst <- unique(countyhrr$hrrname)
+
+CasesofCountythatareinHRR <- function(countyfipsi, hrrnamei, ensemble){
+  # COVID counts of county countyi that are within HRR hrri
+  
+  casescty <- ensemble %>% filter( location==countyfipsi ) # county forecast
   if("forecast_date" %in% colnames(ensemble))
   { # forecast data: nforecasts rows
     stopifnot( nrow(casescty)==nforecasts )
@@ -79,15 +70,13 @@ CasesofCountythatareinHRR <- function(countyi, hrrcityi, ensemble){
   else
   { # historical data: npastdays rows
     if (nrow(casescty)!=npastdays)
-      stop( paste0(countyi, ", nrow(casescty): ", nrow(casescty)) )
+      stop( paste0(countyfipsi, ", nrow(casescty): ", nrow(casescty)) )
   }
-  tmp <- sumpopctyhrr %>% filter( hrrcity==hrrcityi & COUNTY==countyi ) # pop of county that are in HRR
-  if (nrow(tmp)==1){ popctyhrr <- tmp$pop }
-  else if (nrow(tmp)==0){ popctyhrr <- 0 }
-  else{ stop(paste0('length popctyhrr',nrow(tmp))) }
-  popcty <- sumpopcty %>% filter( COUNTY==countyi ) # pop of county
-  stopifnot( nrow(popcty)==1 )
-  casescty$casesctyhrr <- casescty$value * popctyhrr / popcty$pop
+  tmp <- countyhrr %>% filter( hrrname==hrrnamei & COUNTYfips==countyfipsi ) # pop of county that are in HRR
+  if (nrow(tmp)==1){ propctyhrr <- tmp$afact }
+  else if (nrow(tmp)==0){ propctyhrr <- 0 }
+  else{ stop(paste0('length propctyhrr',nrow(tmp))) }
+  casescty$casesctyhrr <- casescty$value * propctyhrr
   
   if("forecast_date" %in% colnames(ensemble))
   { # forecast data (weekly)
@@ -102,28 +91,32 @@ CasesofCountythatareinHRR <- function(countyi, hrrcityi, ensemble){
     return( casescty )
   }
 }
-CasesofHRR <- function(hrrcityi, ensemble){
+CasesofHRR <- function(hrrnamei, ensemble){
   # forecast of HRR hrrcityi
-  tmp <- lapply( countylst, CasesofCountythatareinHRR, hrrcityi, ensemble )
+  tmp <- lapply( countyfipslst, CasesofCountythatareinHRR, hrrnamei, ensemble )
   casesofctiesinhrr <- bind_rows(tmp)
   caseshrr <- casesofctiesinhrr %>% ungroup() %>% group_by( date ) %>% 
-                summarise( caseshrr = sum(casesctyhrr, na.rm=T) )
+                summarise( caseshrr = sum(casesctyhrr, na.rm=T), .groups='drop_last' )
   if("forecast_date" %in% colnames(ensemble))
     stopifnot( nrow(caseshrr)==nforecasts*7 ) # forecast data: nforecasts rows
   else
   { # historical data: npastdays rows
     if (nrow(caseshrr)!=npastdays)
-      stop( paste0(hrrcityi, ", nrow(caseshrr): ", nrow(caseshrr)) )
+      stop( paste0(hrrnamei, ", nrow(caseshrr): ", nrow(caseshrr)) )
   }
-  caseshrr$hrrcity <- hrrcityi
+  caseshrr$hrrcity <- hrrnamei
+  print( paste0(hrrnamei, ", nrow(caseshrr): ", nrow(caseshrr)) )
   return( caseshrr )
 }
 
-colseq <- c("date","Bridgeport","Hartford","New Haven"
+colseq <- c("date","Bridgeport","CT- HARTFORD","CT- NEW HAVEN"
             ,"Boston","Springfield","Worcester","Bangor","Portland"
             ,"Lebanon","Manchester","Providence","Burlington","Albany")
+colseq <- c("date","CT- BRIDGEPORT","CT- HARTFORD","CT- NEW HAVEN"
+            ,"MA- BOSTON","MA- SPRINGFIELD","MA- WORCESTER","ME- BANGOR","ME- PORTLAND"
+            ,"NH- LEBANON","NH- MANCHESTER","RI- PROVIDENCE","VT- BURLINGTON","NY- ALBANY")
 # history - raw data is cumulative
-tmp <- lapply( hrrcities, CasesofHRR, ens_hist )
+tmp <- lapply( hrrnamelst, CasesofHRR, ens_hist )
 cumulhrrs_history <- bind_rows(tmp) %>% tidyr::pivot_wider( names_from=hrrcity, values_from=caseshrr )
 cumulhrrs_history <- cumulhrrs_history[colseq]
 # new cases with smoothing through 7-day moving average
@@ -135,7 +128,7 @@ for ( col in 2:length(colseq) )
 }
 
 # forecast - raw data is NEW CASES
-tmp <- lapply( hrrcities, CasesofHRR, ens_fcst )
+tmp <- lapply( hrrnamelst, CasesofHRR, ens_fcst )
 inchrrs_forecast <- bind_rows(tmp) %>% tidyr::pivot_wider( names_from=hrrcity, values_from=caseshrr ) %>%
   filter( date > latest_history_date )
 inchrrs_forecast <- inchrrs_forecast[colseq]
@@ -148,34 +141,16 @@ cumulhrrs <- inchrrs
 for ( col in 2:length(colseq) )
   cumulhrrs[,col] <- cumsum( inchrrs[,col] )
 
-# for ( col in 2:length(colseq) )
-#  caseshrrs_forecast[,col] <- cumsum( caseshrrs_forecast[,col] )
-
-# forecast - raw data is NEW CASES
-# tmp <- lapply( hrrcities, CasesofHRR, ens_fcst )
-# caseshrrs_forecast <- bind_rows(tmp) %>% tidyr::pivot_wider( names_from=hrrcity, values_from=caseshrr ) %>%
-#                      filter( date >= latest_history_date )
-#caseshrrs_forecast <- caseshrrs_forecast[colseq]
-# transform new cases to cumulative
-#caseshrrs_forecast[caseshrrs_forecast$date==latest_history_date,] = caseshrrs_history[caseshrrs_history$date==latest_history_date,]
-# for ( col in 2:length(colseq) )
-#  caseshrrs_forecast[,col] <- cumsum( caseshrrs_forecast[,col] )
-
-# caseshrrs_forecast <- caseshrrs_forecast %>% filter( date > latest_history_date) # delete first row
-
-# bind history and forecast
-# caseshrrs <- bind_rows( caseshrrs_history, caseshrrs_forecast )
-
 fname <- paste0('/Users/aligo/Downloads/FEMA recovery data/HRR_Forecast_cumul_',latest_history_date,'.xlsx')
 write.xlsx( cumulhrrs, fname ) 
 
 # DEBUG - 14-day rolling average of new cases per 100K people,
 # to benchmark with https://www.dartmouthatlas.org/covid-19/hrr-mapping/
-sumpophrr <- sumpopctyhrr %>% ungroup() %>% group_by( hrrcity ) %>%
-                summarise( pop = sum(pop), .groups='drop_last' )
+sumpophrr <- countyhrr %>% ungroup() %>% group_by( hrrname ) %>%
+                summarise( pop = sum(pop14 * afact), .groups='drop_last' )
 inchrrs100k <- inchrrs
 for ( col in 2:length(colseq) ){
-  pop <- sumpophrr$pop[sumpophrr$hrrcity == colseq[col]]
+  pop <- sumpophrr$pop[sumpophrr$hrrname == colseq[col]]
   inchrrs100k[,col] <- zoo::rollsum( inchrrs100k[[col]] / pop * 100e3
                                       , k=14, fill=NA, align="right" )
 }
