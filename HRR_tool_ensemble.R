@@ -157,4 +157,10 @@ for ( col in 2:length(colseq) ){
 fname <- paste0('/Users/aligo/Downloads/FEMA recovery data/HRR_Forecast100K14d_',latest_history_date,'.xlsx')
 write.xlsx( inchrrs100k, fname ) 
 
-  
+c <- unique(ens_fcst$location)
+s <- sample( c, 16, replace = FALSE )
+tmp <- ens_fcst %>% filter( location %in% s ) %>%
+        mutate( date=as.Date(target_end_date, format="%Y-%m-%d") )
+ggplot( tmp, aes(x=date, y=value) ) +
+  facet_wrap(~location, nrow=4, scales='free_y') +
+ geom_line()
