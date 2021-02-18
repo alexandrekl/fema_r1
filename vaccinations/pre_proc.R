@@ -5,6 +5,7 @@ library(openxlsx)
 
 theme_set( theme_bw() + theme( legend.position="bottom" ) +
              theme( legend.title=element_blank() ) +
+             theme(plot.title = element_text(hjust = 0.5) ) +
              theme( text = element_text(size=16) ) )
 
 # Assumptions
@@ -63,6 +64,16 @@ ggplot( dp, aes(x = date, y=value, color=s) ) +
   scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")
                      , expand = c(0, 0), limits = c(0, NA))
 
+# plot daily_vaccinations (it is already 7-day smoothed in the original data)
+dp <- dcap %>% select(date,location,daily_vaccinations) 
+ggplot( dp, aes(x = date, y=daily_vaccinations) ) +
+  facet_wrap('~ location', nrow=2, scale='free_y' ) +
+  geom_line() + 
+  theme(axis.title.x = element_blank()) +
+  ylab('Daily Vaccinations') +
+  scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")
+                     , expand = c(0, 0), limits = c(0, NA))
+
 # Forecast function
 fcastfn <- function( l, c ){
   # bt = NULL: function tries to find
@@ -73,13 +84,15 @@ fcastfn <- function( l, c ){
   zz <- z
   time(zz) <- seq_along(time(zz))
   # forecast model
-#  sm <- HoltWinters( as.ts(zz[-(1:(nper-1))]), gamma=FALSE )  # , alpha=0.3, gamma=FALSE )
-  sm <- HoltWinters( as.ts(zz[-(1:(nper-1))]), gamma=FALSE ) # 
+  sm <- HoltWinters( as.ts(zz[-(1:(nper-1))]), gamma=FALSE )  # , alpha=0.3, gamma=FALSE )
+#  sm <- HoltWinters( as.ts(zz[-(1:(nper-1))]), gamma=FALSE ) 
+  # tmp <- HoltWinters( as.ts(zz), alpha=0.5, beta=FALSE, gamma=FALSE )
   print( paste('location', l, 'alpha', sm$alpha, 'beta', sm$beta, 'level', sm$coefficients['a'], 'trend', sm$coefficients['b']) )
   pr <- predict(sm, 14, prediction.interval=TRUE, level = 0.95)
 #  plot(sm, pr)
   dates <- seq(max(dt$date)+1, by = "day", length.out = 14)
   prdf <- data.frame( dates, pr ) 
+  prdf[prdf < 0] <- 0    # override negative predictions
   cols <- paste0(c, '_', colnames(prdf[1,-1]))
   colnames(prdf) <- c('date',cols)
   
@@ -131,8 +144,7 @@ ggplot( dfw, aes(x = date, y=daily_vaccinations) ) +
   scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")
                      , expand = c(0, 0), limits = c(0, NA))
 
-# tmp <- HoltWinters( as.ts(zz), alpha=0.5, beta=FALSE, gamma=FALSE )
-
+## MAXIMUM CAPACITY
 # calculate maximum capacity to administer doses per day (assumed constant)
 fname <- '/Users/aligo/Downloads/tmp/vaccine data MOCK.xlsx'
 sites <- read.xlsx( fname, sheet = 1, detectDates=TRUE )
@@ -141,9 +153,10 @@ sitecap <- read.xlsx( fname, sheet = 2, detectDates=TRUE )
 sc <- left_join(sites, sitecap, by=c('date','location','type')) %>%
   group_by(date, location) %>% summarise( cap = sum( Ni * Ci ), .groups='drop_last' )
 
-dfw <- dfw %>% mutate( cap = NA )
+#dfw <- dfw %>% mutate( cap = NA )
 for ( state in NEstates )
-  dfw$cap[dfw$location==state & dfw$date>latest_history_date-5] <- sc$cap[sc$location==state]
+  dfw$cap[dfw$location==state #& dfw$date>latest_history_date-5
+          ] <- sc$cap[sc$location==state]
 
 colors <- c('daily_available','daily_vaccinations','cap')
 dp <- dfw %>%
@@ -170,7 +183,7 @@ wcap <- tmp %>% group_by(location, week) %>%
                    , weekly_vaccinations=mean(daily_vaccinations, na.rm=TRUE)*7
                    , weekly_cap=mean(cap, na.rm=TRUE)*7, .groups='drop_last' )
 wcolors <- c('weekly_available','weekly_vaccinations','weekly_cap')
-cnames <- c('Min supply level in the week','Doses administered','Max vaccination capacity (FAKE)')
+cnames <- c('Min supply level in the week','Doses administered','Max vaccination capacity')
 dp <- wcap %>% select(c('date', 'location', wcolors)) %>%
   #  mutate( supply_daily = zoo::rollmean(supply_daily, k=7, fill=0, align="right") ) %>% 
   tidyr::pivot_longer( cols = all_of(wcolors)
@@ -190,47 +203,69 @@ ggplot( dp, aes(x=date, y=value, color=n) ) +
                      , expand = c(0, 0), limits = c(0, NA))
 
 ### Calculate totals per state for the next week or two ###
-# current stockpile: daily_available = total_distributed*(1-waste_rate) - total_vaccinations, all at latest_history_date
-# Number of people who current need a 2nd dose: demand2nd = people_vaccinated - people_fully_vaccinated, all at latest_history_date
-# assuming everyone in demand2nd will get the 2nd dose within 24 days (average between Moderna and Pfizer)
-# then 7/24 of them will get the shot within one week
-stock <- dcap %>% filter( date == latest_history_date ) %>%
-  mutate( demand2nd1wk = ( people_vaccinated - people_fully_vaccinated ) * 7/t1st2nd
-        , demand2nd2wk = ( people_vaccinated - people_fully_vaccinated ) * 14/t1st2nd ) %>%
-  select( location, daily_available, demand2nd1wk, demand2nd2wk ) 
-
-# Number of people who will get 1st dose next week: demand1st1wk = sum[daily_vaccinations(next 7 days)] - demand2nd1wk
-dvac1wk <- dfw %>% filter( between( date, latest_history_date+1, latest_history_date+7 ) ) %>%
-  group_by( location ) %>%
-  summarise( dvac1wk = sum(daily_vaccinations), .groups='drop_last' )
-dvac2wk <- dfw %>% filter( between( date, latest_history_date+1, latest_history_date+14 ) ) %>%
-  group_by( location ) %>%
-  summarise( dvac2wk = sum(daily_vaccinations), .groups='drop_last' )
-
-stock <- left_join(stock, dvac1wk, by='location') %>%
-          mutate( demand1st1wk = dvac1wk - demand2nd1wk )
-stock <- left_join(stock, dvac2wk, by='location') %>%
-          mutate( demand1st2wk = dvac2wk - demand2nd2wk )
-
-dp <- stock %>% select( -dvac1wk,-dvac2wk ) %>%
-  tidyr::pivot_longer( cols = -location, names_to="variable" ) %>%
-  mutate( cat = 'currently\navailable')
-
-dp[dp$variable=='demand1st1wk' | dp$variable=='demand2nd1wk',]$cat <- "needed\nin 1 week"
-dp[dp$variable=='demand1st2wk' | dp$variable=='demand2nd2wk','cat']$cat <- "needed\nin 2 weeks"
-
-leg <- c('All doses','1st dose','2nd dose')
-dp[dp$variable=='daily_available','variable'] <- leg[1]
-dp[grepl('demand1st[1-2]wk',dp$variable),'variable'] <- leg[2]
-dp[grepl('demand2nd[1-2]wk',dp$variable),'variable'] <- leg[3]
-
-ggplot(dp, aes(x = cat, y = value, fill = variable)) + 
-  geom_bar(stat = 'identity', position = 'stack') + 
-  facet_wrap('~ location', nrow=2, scale='free_y' ) +
-  scale_fill_discrete(breaks=leg) +
-  theme(axis.title.x = element_blank()) +
-  ylab('Number of doses') +
-  scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = ""))
+comp <- function( d ){
+  # This function calculates availability and required doses for the next d days
   
+  # current stockpile: daily_available = total_distributed*(1-waste_rate) - total_vaccinations, all at latest_history_date
+  # Number of people who current need a 2nd dose: demand2nd = people_vaccinated - people_fully_vaccinated, all at latest_history_date
+  # assuming everyone in demand2nd will get the 2nd dose within 24 days (average between Moderna and Pfizer)
+  # then 7/24 of them will get the shot within one week
+  stock <- dcap %>% filter( date == latest_history_date ) %>%
+    mutate( demand2nd = ( people_vaccinated - people_fully_vaccinated ) * d/t1st2nd ) %>%
+    select( location, daily_available, demand2nd ) 
+
+  # Number of people who will get 1st dose next week: demand1st1wk = sum[daily_vaccinations(next d days)] - demand2nd1wk
+  dvac <- dfw %>% filter( between( date, latest_history_date+1, latest_history_date+d ) ) %>%
+    group_by( location ) %>%
+    summarise( dvac = sum(daily_vaccinations), .groups='drop_last' )
+  stock <- left_join(stock, dvac, by='location') %>%
+    mutate( demand1st = dvac - demand2nd )
+  stock[stock < 0] <- 0
   
-save(wcap,latest_history_date,sites,sitecap, file='/Users/aligo/git-repos/FEMA/vaccinations/app.RData')
+  # Number of doses that will be distributed next week = total_distributed(1wk ahead) - total_distributed(current)
+  # = daily_available(1wk ahead) + total_vaccinations(1wk ahead) - daily_available(current) - total_vaccinations(current)
+  # = daily_available(1wk ahead) - daily_available(current) + sum[daily_vaccinations(next 7 days)]
+  # daily_available(1wk ahead)
+  dav <- dfw %>% filter( date==latest_history_date+d ) %>% select(location,daily_available) %>% rename( dav=daily_available ) 
+  stock <- left_join(stock, dav, by='location') %>%
+    mutate( distrib = dav - daily_available + dvac )
+
+  dp <- stock %>% select( -dvac,-dav ) %>%
+    tidyr::pivot_longer( cols = -location, names_to="variable" ) %>%
+    mutate( cat = 'Available')
+  
+  # which stack each total shows in
+  dp[grepl('^demand',dp$variable),'cat'] <- 'Needed'
+  
+  # code to choose colors to use
+  # hex_codes <- scales::dichromat_pal("BluetoOrange.10")(10)   # Identify hex codes
+  # dichromat_pal("BluetoOrange.10")(5)
+  # dichromat_pal("DarkRedtoBlue.12")(12)
+  # scales::show_col(hex_codes) 
+  
+  # legend (colors)
+  # legend must be sorted in the order they should appear in the stack
+  bars <- c('addl forecasted\nstockpile','current\nstockpile','2nd dose\nforecast','1st dose\nforecast')
+  leg <- c(bars[2],bars[1],bars[4],bars[3])
+  colors<- c('#3399FF','#66CCFF', '#FF9933', '#FF5500')
+  dp[dp$variable=='daily_available','variable'] <- leg[1]
+  dp[dp$variable=='distrib','variable'] <- leg[2]
+  dp[dp$variable=='demand1st','variable'] <- leg[3]
+  dp[dp$variable=='demand2nd','variable'] <- leg[4]
+  
+  print( dp )
+  ggplot(dp, aes(x=cat, y=value, fill=factor(variable, levels=bars))) + 
+    geom_bar(stat = 'identity', position = 'stack') + 
+    facet_wrap('~ location', nrow=2, scale='free_y' ) +
+    #  scale_fill_discrete(breaks=leg) +
+    scale_fill_manual(values=colors, breaks=leg) +
+    theme(axis.title.x = element_blank()) +
+    ylab('Number of doses') +
+    scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")) + 
+    ggtitle( paste0(d, '-Day Projection of Doses Available and Needed')) + theme(plot.title = element_text(hjust = 0.5) )
+}
+comp( 7 )
+comp( 14 )
+
+# SAVE for Shiny App
+save(dfw,latest_history_date,sites,sitecap,NEstates, file='/Users/aligo/git-repos/FEMA/vaccinations/app.RData')
