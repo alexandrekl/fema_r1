@@ -11,18 +11,19 @@ library(dplyr)
 library(ggplot2)
 library(openxlsx)
 library(shiny)
+library(shinyWidgets)
 
 theme_set( theme_bw() + theme( legend.position="bottom" ) +
                theme( legend.title=element_blank() ) )
 
+# load pre calculated data and assumptions
 load( 'app.RData' )
-dfw <- dfw %>% mutate( date = as.Date(date,format='%Y-%m-%d') )
+# dfw <- dfw %>% mutate( date = as.Date(date,format='%Y-%m-%d') )
 
+# capacity assumptions
 sc <- left_join(sites, sitecap, by=c('date','location','type')) 
-#ids <- sc[1:6,'type']
 
-#wcolors <- c('weekly_available','weekly_vaccinations','weekly_cap')
-#cnames <- c('Min supply level in the week','Doses administered','Max vaccination capacity')
+# main dataframe
 colors <- c('daily_vaccinations','cap')
 cnames <- c('Doses administered','Max vaccination capacity')
 dp <- dfw %>% tidyr::pivot_longer( cols = all_of(colors)
@@ -31,16 +32,24 @@ dp <- dfw %>% tidyr::pivot_longer( cols = all_of(colors)
 dp <- dp %>% mutate( n = NA )
 dp$n[dp$s %in% colors] <- cnames[match(dp$s,colors)]
 
+# forecasted growth in daily vaccinations
+dvacgr <- dfw %>% group_by( location ) %>%
+                summarise( b = last(dd_vaccinations), .groups='drop_last' )
+# gargs       <- list(inputId="growth", label=NULL, ticks=c(-100, 0, 100), value=0)
+# gargs$min   <- -100
+# gargs$max   <- 100
+# gargs$ticks <- T
+
 # Define UI for application that draws a histogram
 ui <- fluidPage(
     tags$style(type = "text/css",
                "label { font-size: 10px; }"
     ),
+    # Application title
+    titlePanel("New England Vaccinations"),            
     # Sidebar with a slider input for number of bins 
     sidebarLayout(
         sidebarPanel(
-            # Application title
-            titlePanel("New England Vaccinations"),            
             selectInput( "state", NULL, NEstates, selected=NEstates[1] ),
             fluidRow( column( 6, numericInput('N1',
                                              paste0(sc[1,'type'],', number of sites:'),
@@ -88,7 +97,11 @@ ui <- fluidPage(
 
         # Show a plot of the generated distribution
         mainPanel(
-            titlePanel(" "),            
+            wellPanel( fluidRow( column( 7, align="right", h5('Forecasted growth in doses administered/day:') ),
+                                 column( 4, sliderTextInput('growth', NULL, choices = c(1, 10, 100, 500, 1000),
+                                     grid = TRUE
+                                 ) # sliderInput('growth', NULL, min=0, max=1, value=0 ) # uiOutput('growth')
+                                         ) ) ),
             plotOutput("distPlot", height = "550px")
         )
     )
@@ -96,13 +109,31 @@ ui <- fluidPage(
 
 # Define server logic required to draw a histogram
 server <- function(input, output, session) {
-    
+    # output$growth <- renderUI({
+    #     b <- dvacgr$b[dvacgr$location==input$state]
+    #     bm <- signif( b, digits=1 )
+    #     ticks_n <- seq(-bm, bm*3, length=50)
+    #     ticks <- paste0(ticks_n, collapse=',')
+    #     gargs$min <- min(ticks_n)
+    #     gargs$max <- max(ticks_n)
+    #     gargs$value <- b
+    #     gargs$step <- 1
+    #     html  <- do.call('sliderInput', gargs)
+    #     html$children[[2]]$attribs[['data-values']] <- ticks
+    #     sliderInput('growthslider', NULL, min=gargs$min, max=gargs$max, value=b, step=1 )
+    #     html
+    # })
     stateInput <- reactive({
-        # This reative function is executed every time the state changes
+        # This reactive function is executed every time the state changes
         scp <- sc %>% filter( location == input$state )
         
-        # Control the value, min, max, and step.
-        # Step size is 2 when input value is even; 1 when value is odd.
+        # Default growth in daily vaccinations
+        b <- dvacgr$b[dvacgr$location==input$state]
+        bm <- signif( b, digits=1 )
+#        updateSliderInput(session, 'growth', value=b, min=-bm, max=bm*3 )
+        c <- seq(-bm, bm*3, length=5)
+        c[3] <- round(b)
+        updateSliderTextInput(session, 'growth', choices=c, selected=c[3] )
         for ( i in 1:7 ){
             updateNumericInput(session,paste0('N',i), value=scp[i,'Ni'], min=0, max=scp[i,'Ni']*2 )
             updateSliderInput(session, paste0('C',i), value=scp[i,'Ci'], min=0, max=scp[i,'Ci']*2 )
@@ -123,10 +154,17 @@ server <- function(input, output, session) {
         scp <- scp %>% mutate( cap = Ni * Ci )
 
         dt <- dp %>% filter( location==input$state )
+        # update max capacity
         sumcap <- sum( scp$cap )
-        dt[#dt$date>(latest_history_date-5) & 
-            dt$s=='cap','value'] <- sumcap
-        
+        dt[dt$s=='cap','value'] <- sumcap
+
+        # update forecasted growth in daily vaccinations
+        g <- input$growth # input$growthslider
+        if ( !is.null(g) ){
+            a <- dt$value[dt$date==latest_history_date & dt$s=='daily_vaccinations']
+            d <- cumsum( c(a, rep(g,sum(dt$date>latest_history_date & dt$s=='daily_vaccinations')) ) )
+            dt[dt$date>latest_history_date & dt$s=='daily_vaccinations','value'] <- d[-1]
+        }
         # find data where demand exceeds capacity, to draw a warning sign
         tmp <- dt %>% filter( s=='daily_vaccinations' & value>=sumcap )
         

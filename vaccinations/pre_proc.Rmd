@@ -1,3 +1,15 @@
+---
+title: "R Notebook"
+output:
+  html_notebook: default
+  word_document: default
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+```{r echo=FALSE}
+### Load data from Our World in Data
 library(dplyr)
 library(zoo)
 library(ggplot2)
@@ -6,7 +18,7 @@ library(openxlsx)
 theme_set( theme_bw() + theme( legend.position="bottom" ) +
              theme( legend.title=element_blank() ) +
              theme(plot.title = element_text(hjust = 0.5) ) +
-             theme( text = element_text(size=16) ) )
+             theme( text = element_text(size=12) ) )
 
 # Assumptions
 waste_rate <- 0.0013  # rate of doses lost
@@ -32,7 +44,8 @@ dcap <- df %>% filter( location %in% NEstates ) %>%
           # , daily_available_avg = rollmean(daily_available, k=nper, fill=NA, align="right") # total availability level IGNORING WASTE
   ) %>% ungroup()
 latest_history_date <- max(dcap$date)
-
+```
+```{r echo=FALSE}
 ### Totals ###
 tmp <- lapply( NEstates, function( state ){
   idx <- dcap$location==state & dcap$date==latest_history_date
@@ -45,46 +58,22 @@ tmp <- lapply( NEstates, function( state ){
   print( paste('People with 1+ Doses per 100k', state, dcap$people_vaccinated_per_hundred[idx]*1000) )
   print( paste('People with 2+ Doses per 100k', state, dcap$people_fully_vaccinated_per_hundred[idx]*1000) )
 } )
-
-# plot cummulative supply and capacity
-# colors <- c('total_distributed','total_vaccinations','daily_available')
-# dp <- dcap %>% select(c('date','location',colors)) %>%
-#     mutate( daily_distributed_avg = rollmean(daily_distributed, k=7, fill=0, align="right") ) %>% 
-#      tidyr::pivot_longer( cols = all_of(colors), names_to="s" 
-#                             , values_to = "value",  values_drop_na = TRUE )
-# cnames <- c('(I) Total distributed','(II) Total vaccinations','Supply level (I-II)')
-# dp <- dp %>% mutate( n = NA )
-# dp$n[dp$s %in% colors] <- cnames[match(dp$s,colors)]
-# ggplot( dp, aes(x = date, y=value, color=n) ) +
-#    facet_wrap('~ location', nrow=2, scale='free_y' ) +
-#    geom_line() + 
-#   theme(axis.title.x = element_blank()) +
-#   ylab('Total Number of Doses') +
-#   scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")
-#                       , expand = c(0, 0), limits = c(0, NA))
-
-# plot smoothed supply
-# dp <- dcap %>% select(date,location,daily_available,daily_available_avg) %>%
-#   tidyr::pivot_longer( cols = c('daily_available','daily_available_avg'), names_to="s" 
-#                        , values_to = "value",  values_drop_na = TRUE )
-# ggplot( dp, aes(x = date, y=value, color=s) ) +
-#   facet_wrap('~ location', nrow=2, scale='free_y' ) +
-#   geom_line() + 
-#   theme(axis.title.x = element_blank()) +
-#   ylab('Total Number of Doses') +
-#   scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")
-#                      , expand = c(0, 0), limits = c(0, NA))
-
-# plot daily_vaccinations (it is already 7-day smoothed in the original data)
+```
+Plot daily_vaccinations (it is already 7-day smoothed in the original data)
+```{r echo=FALSE}
 dp <- dcap %>% select(date,location,daily_vaccinations) 
 ggplot( dp, aes(x = date, y=daily_vaccinations) ) +
   facet_wrap('~ location', nrow=2, scale='free_y' ) +
   geom_line() + 
   theme(axis.title.x = element_blank()) +
+  scale_x_date(date_labels = '%b%e' ) +
   ylab('Daily Vaccinations') +
   scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")
                      , expand = c(0, 0), limits = c(0, NA))
 
+```
+Forecasting: 
+```{r echo=FALSE}
 # Forecast function
 fcastfn <- function( l, c, al ){
   # bt = NULL: function tries to find
@@ -118,11 +107,19 @@ fcastfn <- function( l, c, al ){
 }
 # Forecast daily supply level of doses
 #tmp <- lapply( NEstates, fcastfn, 'daily_available_avg' )
-tmp <- lapply( NEstates, fcastfn, 'total_distributed', 0.1 )
+```
+Forecast Cumulative number of doses **distributed**
+```{r echo=FALSE}
+tmp <- lapply( NEstates, fcastfn, 'total_distributed', 0.07 )
 f <- list( bind_rows( tmp ) )
-tmp <- lapply( NEstates, fcastfn, 'total_vaccinations', 0.3 )
+```
+Forecast Cumulative number of doses **administered**
+```{r echo=FALSE}
+tmp <- lapply( NEstates, fcastfn, 'total_vaccinations', 0.2 )
 f[[2]] <- bind_rows( tmp ) %>% select(-date,-location)
-
+```
+Forecast **Daily** number of doses **administered**
+```{r echo=FALSE}
 # Forecast daily vaccinations
 tmp <- lapply( NEstates, fcastfn, 'daily_vaccinations', 0.3 )
 f[[3]] <- bind_rows( tmp ) %>% select(-date,-location)
@@ -137,46 +134,33 @@ fcast_s <- fcast %>% select(date,location,daily_vaccinations_fit,total_distribut
 colnames(fcast_s) <- colnames(dcap_s)
 dfw <- bind_rows( dcap_s, fcast_s ) %>%
   mutate( daily_available = total_distributed*(1-waste_rate) - total_vaccinations ) # total availability level
+```
+Plot Forecasted Cumulative number of doses distributed & administered
+```{r echo=FALSE}
+print( paste0('\'Availability\' = [Cumulative number of doses distributed] - [Cumulative number of doses administered] - [waste(', waste_rate*100, '% of total)]') )
+```
+```{r echo=FALSE}
 
-dp <- dfw %>% tidyr::pivot_longer( cols = c('total_distributed','total_vaccinations','daily_available')
+colors <- c('total_distributed','total_vaccinations','daily_available')
+dp <- dfw %>% tidyr::pivot_longer( cols = all_of(colors)
                                    , names_to="s", values_to="value", values_drop_na=TRUE )
+cnames <- c('Distributed','Administered','Availability')
+dp <- dp %>% mutate( n = NA )
+dp$n[dp$s %in% colors] <- cnames[match(dp$s,colors)]
 ggplot( dp, aes(x = date, y=value, color=n) ) +
   facet_wrap('~ location', nrow=2, scale='free_y' ) +
   geom_line() + 
   geom_vline(xintercept=latest_history_date, linetype="dashed", 
              color = "gray") +  
   theme(axis.title.x = element_blank()) +
+  scale_x_date(date_labels = '%b%e' ) +
   ylab('Cummulative Number of Doses') +
   scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")
                      , expand = c(0, 0), limits = c(0, NA))
 
-# derivative of daily_vaccinations
-dfw <- dfw %>% group_by( location ) %>%
-  mutate( dd_vaccinations = (daily_vaccinations-lag(daily_vaccinations))/as.numeric(date-lag(date)))
-
-dp <- dfw %>% tidyr::pivot_longer( cols = c('daily_vaccinations','daily_available')
-                       , names_to="s" 
-                       , values_to = "value",  values_drop_na = TRUE )
-ggplot( dp, aes(x = date, y=value, color=s) ) +
-   facet_wrap('~ location', nrow=2, scale='free_y' ) +
-   geom_line() + 
-  geom_vline(xintercept=latest_history_date, linetype="dashed", 
-             color = "gray") +  
-  theme(axis.title.x = element_blank()) +
-   ylab('Total Number of Doses') +
-   scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")
-                      , expand = c(0, 0), limits = c(0, NA))
-ggplot( dfw, aes(x = date, y=daily_vaccinations) ) +
-  facet_wrap('~ location', nrow=2, scale='free_y' ) +
-  geom_line() + 
-  geom_vline(xintercept=latest_history_date, linetype="dashed", 
-             color = "gray") +  
-  theme(axis.title.x = element_blank()) +
-  ylab('Daily Vaccinations') +
-  scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")
-                     , expand = c(0, 0), limits = c(0, NA))
-
+```
 ## MAXIMUM CAPACITY
+```{r echo=FALSE}
 # calculate maximum capacity to administer doses per day (assumed constant)
 fname <- '/Users/aligo/Downloads/tmp/vaccine data MOCK.xlsx'
 sites <- read.xlsx( fname, sheet = 1, detectDates=TRUE )
@@ -207,46 +191,30 @@ ggplot( dp, aes(x = date, y=value, color=n) ) +
   theme(axis.title.x = element_blank()) +
   ylab('Doses per day') +
   scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = ""))
+```
+## SAVE data for Shiny App
+```{r echo=FALSE}
+# derivative of daily_vaccinations
+dfw <- dfw %>% group_by( location ) %>%
+  mutate( dd_vaccinations = (daily_vaccinations-lag(daily_vaccinations))/as.numeric(date-lag(date)))
 
-# WEEKLY
-tmp <- dfw %>% mutate( week = format(date, '%Y.%W') )
-wcap <- tmp %>% group_by(location, week) %>%
-        summarise( date = max(date), weekly_available=min(daily_available, na.rm=TRUE)
-                   , weekly_vaccinations=mean(daily_vaccinations, na.rm=TRUE)*7
-                   , weekly_cap=mean(cap, na.rm=TRUE)*7, .groups='drop_last' )
-wcolors <- c('weekly_available','weekly_vaccinations','weekly_cap')
-cnames <- c('Min supply level in the week','Doses administered','Max vaccination capacity')
-dp <- wcap %>% select(c('date', 'location', wcolors)) %>%
-  #  mutate( supply_daily = zoo::rollmean(supply_daily, k=7, fill=0, align="right") ) %>% 
-  tidyr::pivot_longer( cols = all_of(wcolors)
-                       , names_to="s" 
-                       , values_to = "value",  values_drop_na = TRUE )
-dp <- dp %>% mutate( n = NA )
-dp$n[dp$s %in% wcolors] <- cnames[match(dp$s,wcolors)]
-ggplot( dp, aes(x=date, y=value, color=n) ) +
-  facet_wrap('~ location', nrow=2, scale='free_y' ) +
-  geom_line() +
-  geom_vline(xintercept=latest_history_date, linetype="dashed", 
-               color = "gray") +  # , size=1.5
-  theme(axis.title.x = element_blank()) +
-  scale_x_date(date_labels = '%b%e' ) +
-  ylab('Doses per week') +
-  scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")
-                     , expand = c(0, 0), limits = c(0, NA))
+save(dfw,latest_history_date,sites,sitecap,NEstates, file='/Users/aligo/git-repos/FEMA/vaccinations/app.RData')
+```
 
-### Calculate totals per state for the next week or two ###
+```{r echo=FALSE}
+## Forecast totals per state ##
 comp <- function( d ){
   # This function calculates availability and required doses for the next d days
   
   # current stockpile: daily_available = total_distributed*(1-waste_rate) - total_vaccinations, all at latest_history_date
   # Number of people who current need a 2nd dose: demand2nd = people_vaccinated - people_fully_vaccinated, all at latest_history_date
-  # assuming everyone in demand2nd will get the 2nd dose within 24 days (average between Moderna and Pfizer)
-  # then 7/24 of them will get the shot within one week
+  # assuming everyone in demand2nd will get the 2nd dose within 24 days (average between Moderna and Pfizer), then 7/24 of them will get the shot within one week
   stock <- dcap %>% filter( date == latest_history_date ) %>%
-    mutate( demand2nd = ( people_vaccinated - people_fully_vaccinated ) * d/t1st2nd ) %>%
+    mutate( demand2nd = ( people_vaccinated - people_fully_vaccinated ) * d/t1st2nd ,
+            daily_available = total_distributed*(1-waste_rate) - total_vaccinations ) %>% # total availability
     select( location, daily_available, demand2nd ) 
 
-  # Number of people who will get 1st dose next week: demand1st1wk = sum[daily_vaccinations(next d days)] - demand2nd1wk
+  # Number of people who will get 1st dose next week: demand1st1wk = sum[daily_vaccinations(next d days)] - demand2nd
   dvac <- dfw %>% filter( between( date, latest_history_date+1, latest_history_date+d ) ) %>%
     group_by( location ) %>%
     summarise( dvac = sum(daily_vaccinations), .groups='drop_last' )
@@ -285,7 +253,7 @@ comp <- function( d ){
   dp[dp$variable=='demand1st','variable'] <- leg[3]
   dp[dp$variable=='demand2nd','variable'] <- leg[4]
   
-  print( dp )
+#  print( dp )
   ggplot(dp, aes(x=cat, y=value, fill=factor(variable, levels=bars))) + 
     geom_bar(stat = 'identity', position = 'stack') + 
     facet_wrap('~ location', nrow=2, scale='free_y' ) +
@@ -296,8 +264,53 @@ comp <- function( d ){
     scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")) + 
     ggtitle( paste0(d, '-Day Projection of Doses Available and Needed')) + theme(plot.title = element_text(hjust = 0.5) )
 }
-comp( 7 )
-comp( 14 )
+```
 
-# SAVE for Shiny App
-save(dfw,latest_history_date,sites,sitecap,NEstates, file='/Users/aligo/git-repos/FEMA/vaccinations/app.RData')
+# WEEKLY REPORT STARTS HERE
+
+# FEMA-R1 Vaccine Assessment
+```{r echo=FALSE}
+print( paste('Latest data from', latest_history_date))
+```
+## 7-day forecast of availability and administration of doses
+The following figure shows a forecast of availability and administration of doses per state for the next 7 days. The blue bars show the estimated availability of doses, where the dark blue represents the current availability estimated as $D - V - W$, where $D$ is the cumulative number of doses distributed, $V$ is the cumulative number of vaccinations, and $W$ is waste (estimated as 0.13% of the total **MAUREEN, CAN YOU ADD THE SOURCE?**), as of February 21st. The light blue bar is the forecast of doses distributed to the state within the next 7 days. The orange bars represent the forecasted number of vaccinations (light orange is the number of people expected to get the first dose of Pfizer or Moderna while the dark orange is the number expected to get the second dose).  
+Fig. 1 suggests that most New England states depend on receiving new shipments within the next 7 days (light blue) in order to be able to serve the expected number of vaccinations (orange). Rhode Island is at risk of running out of doses this week according to current trends. This is probably because of the disruptions caused by the winter storm that delayed shipments for all 50 states last week (https://www.npr.org/sections/coronavirus-live-updates/2021/02/19/969519016/extreme-winter-weather-creates-backlog-of-6-million-vaccine-doses). The only exception is New Hampshire, which will likely be able to serve this week's vaccinations with the doses already shipped and currently not administered (dark blue).  
+
+
+```{r echo=FALSE}
+comp( 7 )
+```
+
+Figure 1. 7-day forecast of availability and administration of doses for the New England states. Source: CDC/Our World in data, Feb 21.
+
+## 14-day forecast of availability and administration of doses
+Figure 2 shows a forecast of availability and administration of doses per state for the next 14 days and suggests that CT, MA, RI, and VT are at risk of running out of doses within the next two weeks according to current trends. Again, this is probably because of the disruptions caused by the winter storm that delayed shipments last week. (New Hampshire and Maine will likely be able to serve the next two week's vaccinations with the doses available and expected to be received.)
+
+```{r echo=FALSE}
+comp( 14 )
+```
+
+Figure 2. 14-day forecast of availability and administration of doses for the New England states. Source: CDC/Our World in data, Feb 21.
+
+## Forecasting method
+The projections above are based on the forecast of the cumulative number of doses distributed and the cumulative number of doses administered, shown in Fig. 3. Both forecasts are obtained as a linear projection of the recent trend in the cumulative totals. Note that the recent trends of CT, MA, RI and VT indicate that total vaccinations may reach the total number of doses shipped within the next week. This is because vaccinations have accelerated in the previous days in those states, while distribution has not been followed by a similar increase (possibly because of the impact of the recent snow storm). The risk of vaccine shortage may be higher for facilities which shipments may be lower and vaccinations higher than the state averages.
+
+```{r echo=FALSE}
+colors <- c('total_distributed','total_vaccinations','daily_available')
+dp <- dfw %>% tidyr::pivot_longer( cols = all_of(colors)
+                                   , names_to="s", values_to="value", values_drop_na=TRUE )
+cnames <- c('Cumulative Distributed','Cumulative Administered','Availability')
+dp <- dp %>% mutate( n = NA )
+dp$n[dp$s %in% colors] <- cnames[match(dp$s,colors)]
+ggplot( dp, aes(x = date, y=value, color=n) ) +
+  facet_wrap('~ location', nrow=2, scale='free_y' ) +
+  geom_line() + 
+  geom_vline(xintercept=latest_history_date, linetype="dashed", 
+             color = "gray") +  
+  theme(axis.title.x = element_blank()) +
+  scale_x_date(date_labels = '%b%e' ) +
+  ylab('Number of Doses') +
+  scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")
+                     , expand = c(0, 0), limits = c(0, NA))
+```
+Figure 3. Forecast of cumulative number of distributed doses, cumulative number of doses administered, and availability of doses for the New England states. Source: CDC/Our World in data, Feb 21.
