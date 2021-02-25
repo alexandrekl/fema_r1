@@ -32,7 +32,8 @@ nper <- 14 # days to smooth supply
 # truth URL from the CDC ensemble 
 vurl <- 'https://raw.githubusercontent.com/owid/covid-19-data/master/public/data/vaccinations/us_state_vaccinations.csv'
 df <- read.csv( vurl ) 
-
+```
+```{r echo=FALSE}
 # Calculate daily history
 # (current capacity to administer doses per day is in daily_vaccinations - 7-day moving avg)
 dcap <- df %>% filter( location %in% NEstates ) %>% 
@@ -40,6 +41,7 @@ dcap <- df %>% filter( location %in% NEstates ) %>%
   mutate( date = as.Date(date, tryFormats = dfmts)
           , total_vaccinations = na.approx( total_vaccinations, na.rm=FALSE )
           , total_distributed = na.approx( total_distributed, na.rm=FALSE )
+          , people_vaccinated_per_hundred = na.approx( people_vaccinated_per_hundred, na.rm=FALSE )
           # , daily_available = total_distributed*(1-waste_rate) - total_vaccinations # total availability level IGNORING WASTE
           # , daily_available_avg = rollmean(daily_available, k=nper, fill=NA, align="right") # total availability level IGNORING WASTE
   ) %>% ungroup()
@@ -59,6 +61,15 @@ tmp <- lapply( NEstates, function( state ){
   print( paste('People with 2+ Doses per 100k', state, dcap$people_fully_vaccinated_per_hundred[idx]*1000) )
 } )
 ```
+CDC population numbers
+```{r echo=FALSE}
+pop <- dcap %>% mutate( pop1 = total_vaccinations/(total_vaccinations_per_hundred/100),
+                        pop2 = total_distributed/(distributed_per_hundred/100) ) %>%
+      group_by( location ) %>%
+      summarise( m=mean(pop1, na.rm=TRUE), s1=sd(pop1, na.rm=TRUE)
+                , m2=mean(pop2, na.rm=TRUE), s2=sd(pop2, na.rm=TRUE), .groups='drop_last' )
+print(pop)
+```
 Plot daily_vaccinations (it is already 7-day smoothed in the original data)
 ```{r echo=FALSE}
 dp <- dcap %>% select(date,location,daily_vaccinations) 
@@ -68,9 +79,9 @@ ggplot( dp, aes(x = date, y=daily_vaccinations) ) +
   theme(axis.title.x = element_blank()) +
   scale_x_date(date_labels = '%b%e' ) +
   ylab('Daily Vaccinations') +
+  ggtitle( paste('Latest data from', latest_history_date) ) +
   scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")
                      , expand = c(0, 0), limits = c(0, NA))
-
 ```
 Forecasting: 
 ```{r echo=FALSE}
@@ -107,30 +118,41 @@ fcastfn <- function( l, c, al ){
 }
 # Forecast daily supply level of doses
 #tmp <- lapply( NEstates, fcastfn, 'daily_available_avg' )
+print( paste('Latest data from', latest_history_date) )
 ```
 Forecast Cumulative number of doses **distributed**
 ```{r echo=FALSE}
+print( paste('Latest data from', latest_history_date) )
 tmp <- lapply( NEstates, fcastfn, 'total_distributed', 0.07 )
 f <- list( bind_rows( tmp ) )
 ```
 Forecast Cumulative number of doses **administered**
 ```{r echo=FALSE}
+print( paste('Latest data from', latest_history_date) )
 tmp <- lapply( NEstates, fcastfn, 'total_vaccinations', 0.2 )
 f[[2]] <- bind_rows( tmp ) %>% select(-date,-location)
 ```
 Forecast **Daily** number of doses **administered**
 ```{r echo=FALSE}
+print( paste('Latest data from', latest_history_date) )
 # Forecast daily vaccinations
 tmp <- lapply( NEstates, fcastfn, 'daily_vaccinations', 0.3 )
 f[[3]] <- bind_rows( tmp ) %>% select(-date,-location)
-
+```
+Forecast people vaccinated per capita
+```{r echo=FALSE}
+print( paste('Latest data from', latest_history_date) )
+tmp <- lapply( NEstates, fcastfn, 'people_vaccinated_per_hundred', 0.3 )
+f[[4]] <- bind_rows( tmp ) %>% select(-date,-location)
+```
+Bind history and prediction
+```{r echo=FALSE}
 fcast <- bind_cols( f )
 latest_fcast_date <- max(fcast$date)
 
-# bind history and prediction
 #dcap_s <- dcap %>% select( date, location, daily_vaccinations,   daily_available )
-dcap_s <- dcap %>% select( date, location, daily_vaccinations,   total_distributed,    total_vaccinations )
-fcast_s <- fcast %>% select(date,location,daily_vaccinations_fit,total_distributed_fit,total_vaccinations_fit)
+dcap_s <- dcap %>% select( date, location, daily_vaccinations,   total_distributed,    total_vaccinations,  people_vaccinated_per_hundred )
+fcast_s <- fcast %>% select(date,location,daily_vaccinations_fit,total_distributed_fit,total_vaccinations_fit,people_vaccinated_per_hundred_fit)
 colnames(fcast_s) <- colnames(dcap_s)
 dfw <- bind_rows( dcap_s, fcast_s ) %>%
   mutate( daily_available = total_distributed*(1-waste_rate) - total_vaccinations ) # total availability level
@@ -140,7 +162,6 @@ Plot Forecasted Cumulative number of doses distributed & administered
 print( paste0('\'Availability\' = [Cumulative number of doses distributed] - [Cumulative number of doses administered] - [waste(', waste_rate*100, '% of total)]') )
 ```
 ```{r echo=FALSE}
-
 colors <- c('total_distributed','total_vaccinations','daily_available')
 dp <- dfw %>% tidyr::pivot_longer( cols = all_of(colors)
                                    , names_to="s", values_to="value", values_drop_na=TRUE )
@@ -152,17 +173,29 @@ ggplot( dp, aes(x = date, y=value, color=n) ) +
   geom_line() + 
   geom_vline(xintercept=latest_history_date, linetype="dashed", 
              color = "gray") +  
+  ggtitle( paste('Latest data from', latest_history_date) ) +
   theme(axis.title.x = element_blank()) +
   scale_x_date(date_labels = '%b%e' ) +
   ylab('Cummulative Number of Doses') +
   scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")
                      , expand = c(0, 0), limits = c(0, NA))
-
+```
+Plot Forecasted Cumulative number of people vaccinated per hundred
+```{r echo=FALSE}
+ggplot( dp, aes(x = date, y=people_vaccinated_per_hundred) ) +
+  facet_wrap('~ location', nrow=2 ) +
+  geom_line() + 
+  geom_vline(xintercept=latest_history_date, linetype="dashed", 
+             color = "gray") +  
+  ggtitle( paste('Latest data from', latest_history_date) ) +
+  theme(axis.title.x = element_blank()) +
+  scale_x_date(date_labels = '%b%e' ) +
+  scale_y_continuous(expand = c(0, 0), limits = c(0, NA))
 ```
 ## MAXIMUM CAPACITY
 ```{r echo=FALSE}
 # calculate maximum capacity to administer doses per day (assumed constant)
-fname <- '/Users/aligo/Downloads/tmp/vaccine data MOCK.xlsx'
+fname <- '/Users/aligo/Downloads/FEMA recovery data/vaccine capacity.xlsx'
 sites <- read.xlsx( fname, sheet = 1, detectDates=TRUE )
 sitecap <- read.xlsx( fname, sheet = 2, detectDates=TRUE )
 
@@ -189,20 +222,38 @@ ggplot( dp, aes(x = date, y=value, color=n) ) +
   geom_vline(xintercept=latest_history_date, linetype="dashed", 
              color = "gray") +  
   theme(axis.title.x = element_blank()) +
+  ggtitle( paste('Latest data from', latest_history_date) ) +
   ylab('Doses per day') +
   scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = ""))
 ```
-## SAVE data for Shiny App
+## calculate derivative of daily_vaccinations and totals per 100K people
 ```{r echo=FALSE}
+print( paste('Latest data from', latest_history_date) )
 # derivative of daily_vaccinations
 dfw <- dfw %>% group_by( location ) %>%
-  mutate( dd_vaccinations = (daily_vaccinations-lag(daily_vaccinations))/as.numeric(date-lag(date)))
+  mutate( dd_vaccinations = (daily_vaccinations-lag(daily_vaccinations))/as.numeric(date-lag(date)) 
+          , daily_vaccinations_per_million=NA
+          , total_vaccinations_per_hundred=NA
+          , distributed_per_hundred=NA )
 
-save(dfw,latest_history_date,sites,sitecap,NEstates, file='/Users/aligo/git-repos/FEMA/vaccinations/app.RData')
+# totals per 100K people (history and forecast)
+for ( state in NEstates ){
+  popst <- pop$m[pop$location==state]
+  idx <- dfw$location==state
+  dfw$daily_vaccinations_per_million[idx] <- dfw$daily_vaccinations[idx] / popst * 1e6
+  dfw$total_vaccinations_per_hundred[idx] <- dfw$total_vaccinations[idx] / popst * 100
+  dfw$distributed_per_hundred[idx] <- dfw$total_distributed[idx] / popst * 100
+}
+```
+
+## SAVE data for Shiny App
+```{r echo=FALSE}
+print( paste('SAVING Latest data from', latest_history_date) )
+save(dfw, latest_history_date, sites, sitecap, pop, NEstates, file='/Users/aligo/git-repos/FEMA/vaccinations/app.RData')
 ```
 
 ```{r echo=FALSE}
-## Forecast totals per state ##
+## Forecast total availability and vax per state (for bar graphs) ##
 comp <- function( d ){
   # This function calculates availability and required doses for the next d days
   
@@ -245,8 +296,8 @@ comp <- function( d ){
   
   # legend (colors)
   # legend must be sorted in the order they should appear in the stack
-  bars <- c('addl forecasted\nstockpile','current\nstockpile','2nd dose\nforecast','1st dose\nforecast')
-  leg <- c(bars[2],bars[1],bars[4],bars[3])
+  bars <- c('addl forecasted\nstockpile','current\nstockpile','1st dose\nforecast','2nd dose\nforecast')
+  leg <- c(bars[2],bars[1],bars[3],bars[4])
   colors<- c('#3399FF','#66CCFF', '#FF9933', '#FF5500')
   dp[dp$variable=='daily_available','variable'] <- leg[1]
   dp[dp$variable=='distrib','variable'] <- leg[2]
