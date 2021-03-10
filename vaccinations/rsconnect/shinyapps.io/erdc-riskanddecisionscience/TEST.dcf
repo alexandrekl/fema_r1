@@ -1,0 +1,13 @@
+name: TEST
+title: TEST
+username:
+account: erdc-riskanddecisionscience
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 3665759
+bundleId: 4258765
+url: https://erdc-riskanddecisionscience.shinyapps.io/TEST/
+when: 1614035942.52552
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: app_lixo.R|MassGoogleMapsSCraperANDREWS.py|pre_proc.docx|pre_proc.nb.html|pre_proc.R|pre_proc.Rmd

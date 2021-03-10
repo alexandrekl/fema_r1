@@ -1,0 +1,80 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is summary of vaccine availability at pharmacies.
+Source: "Pharmacy Providers - Reporting Dataset" from Tiberius. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+fname <- '/Users/aligo/Downloads/FEMA recovery data/Data_tiberius/csv/Pharmacy+Providers+-+Reporting+Dataset.csv'
+df <- read.csv( fname )
+```
+
+Filter data
+```{r}
+pharm <- df %>% filter( state %in% c('CT','MA','ME','NH','RI','VT') & vfinder_enrollment_status=='Enrolled' )
+print( paste('Pharmacies w/ Moderna:', sum(pharm$vfinder_moderna_on_hand_quantity > 0)) )
+print( paste('Pharmacies w/ Pfizer:', sum(pharm$vfinder_pfizer_on_hand_quantity > 0)) )
+print( paste('Pharmacies w/ both Mod and Pfi:', sum(pharm$vfinder_moderna_on_hand_quantity > 0 & pharm$vfinder_pfizer_on_hand_quantity > 0)) )
+print( paste('Pharmacies w/ NEITHER Mod and Pfi:', sum(pharm$vfinder_moderna_on_hand_quantity==0 & pharm$vfinder_pfizer_on_hand_quantity==0)) )
+```
+```{r}
+dp <- pharm %>% mutate( vfinder_on_hand_quantity = vfinder_moderna_on_hand_quantity + vfinder_pfizer_on_hand_quantity ) # %>% tidyr::pivot_longer( cols = ends_with('_on_hand_quantity'), names_to="s", values_to = "value",  values_drop_na = TRUE )
+
+ggplot( dp, aes(x=vfinder_on_hand_quantity) ) + 
+  stat_ecdf( ) +
+  scale_x_continuous(trans='log2') +
+  ylab( 'CDF' ) + xlab( 'Doses on hand at each Pharmacy' )
+ggplot( dp, aes(x=vfinder_on_hand_quantity) ) + 
+  stat_ecdf( ) +
+  coord_cartesian( xlim=c(0,75) ) +
+  ylab( 'CDF' ) + xlab( 'Doses on hand at each Pharmacy' )
+#ggplot( dp, aes(x=vfinder_on_hand_quantity) ) + geom_density()
+```
+Correlation of pharmacy stock and CDC Social Vulnerability Index
+```{r}
+tmp <- pharm %>% mutate( x = moderna_cumulative_doses_delivered + pfizer_cumulative_doses_delivered )
+ggplot( tmp, aes(x=x, y=svi_rank) ) +
+  geom_point( )
+ggplot( tmp, aes(x=x, y=svi_rank) ) +
+  geom_point( ) +
+  scale_x_continuous(trans='log2')
+ggplot( tmp, aes(x=x, y=svi_rank) ) +
+  geom_point( ) +
+  coord_cartesian( xlim=c(0,5000) ) 
+```
+
+Stock per zicode 
+```{r}
+dpz <- dp %>% mutate( hand0 = (vfinder_on_hand_quantity==0), hand50 = (vfinder_on_hand_quantity<=50) ) %>%
+                group_by( zip ) %>% 
+  summarise( address=first(address), city=first(city), county=first(county), county_mapping=first(county_mapping), latitude=first(latitude), longitude=first(longitude), geopoint=first(geopoint), internal_county_mapping=first(internal_county_mapping), svi_rank=first(svi_rank), state=first(state), hand_quantity=sum(vfinder_on_hand_quantity), cum_delivered = sum(moderna_cumulative_doses_delivered, na.rm=TRUE) + sum(pfizer_cumulative_doses_delivered, na.rm=TRUE), n_hand0 = sum(hand0), n_hand50 = sum(hand50), .groups='drop_last' )
+write.csv(dpz, file='/Users/aligo/Downloads/tmp/vax.csv')
+```
+
+Provider+Vaccine+Finder+Inventory+-+Reporting+Dataset.csv
+```{r}
+fname <- '/Users/aligo/Downloads/FEMA recovery data/Data_tiberius/2021-03-04/Provider+Vaccine+Finder+Inventory+-+Reporting+Dataset.csv'
+df <- read.csv( fname ) 
+```
+```{r}
+prov <- df %>% filter( loc_awardee %in% c("Connecticut","Maine","Massachusetts","New Hampshire" ,"Rhode Island","Vermont") & vfinder_enrollment_status=='Enrolled' & most_recent_record==1 ) 
+```
+```{r}
+tmp <- unique(prov$provider_fips_code)
+tmp <- unique(prov$provider_county)
+tmp <- unique(prov$provider_latitude)
+tmp <- unique(prov$provider_longitude)
+tmp <- unique(prov$provider_geopoint)
+tmp <- unique(prov$loc_admin_zip)
+tmp <- unique(prov$vfinder_enrollment_status)
+```
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+

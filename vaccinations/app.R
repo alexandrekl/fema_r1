@@ -149,12 +149,15 @@ server <- function(input, output, session) {
         scp <- sc %>% filter( location == input$state )
         
         # Default growth in daily vaccinations
-        b <- dvacgr$b[dvacgr$location==input$state]
-        bm <- signif( b, digits=1 )
-        updateSliderInput(session, 'growth', value=round(b), min=-bm*3, max=bm*3 )
-        # c <- seq(-bm, bm*3, length=5)
-        # c[3] <- round(b)
-        # updateSliderTextInput(session, 'growth', choices=c, selected=c[3] )
+        # print( dvacgr$b[dvacgr$location==input$state] )
+        b <- max( c(dvacgr$b[dvacgr$location==input$state], 0) )
+        if ( input$state %in% c('Connecticut','Massachusetts','Rhode Island') )
+            bm <- 2000
+        else # ME, NH or VT
+            bm <- 1000
+        
+        updateSliderInput(session, 'growth', value=round(b), min=-bm, max=bm )
+        
         for ( i in 1:7 ){
             updateNumericInput(session,paste0('N',i), value=scp[i,'Ni'], min=0, max=scp[i,'Ni']*2 )
             updateSliderInput(session, paste0('C',i), value=scp[i,'Ci'], min=0, max=scp[i,'Ci']*2 )

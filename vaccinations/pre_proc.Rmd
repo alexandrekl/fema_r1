@@ -49,6 +49,7 @@ latest_history_date <- max(dcap$date)
 ```
 ```{r echo=FALSE}
 ### Totals ###
+print( paste('Latest data from', latest_history_date) )
 tmp <- lapply( NEstates, function( state ){
   idx <- dcap$location==state & dcap$date==latest_history_date
   print( paste('Total Administered', state, dcap$total_vaccinations[idx]) )
@@ -74,7 +75,7 @@ Plot daily_vaccinations (it is already 7-day smoothed in the original data)
 ```{r echo=FALSE}
 dp <- dcap %>% select(date,location,daily_vaccinations) 
 ggplot( dp, aes(x = date, y=daily_vaccinations) ) +
-  facet_wrap('~ location', nrow=2, scale='free_y' ) +
+  facet_wrap(~ location, nrow=2, scale='free_y' ) +
   geom_line() + 
   theme(axis.title.x = element_blank()) +
   scale_x_date(date_labels = '%b%e' ) +
@@ -83,10 +84,22 @@ ggplot( dp, aes(x = date, y=daily_vaccinations) ) +
   scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")
                      , expand = c(0, 0), limits = c(0, NA))
 ```
+Plot same as above but the the last 2 weeks
+```{r echo=FALSE}
+dp <- dcap %>% filter( date >= (latest_history_date-14) ) %>% select(date,location,daily_vaccinations) 
+ggplot( dp, aes(x = date, y=daily_vaccinations) ) +
+  facet_wrap('~ location', nrow=2, scale='free_y' ) +
+  geom_line() + 
+  theme(axis.title.x = element_blank()) +
+  scale_x_date(date_labels = '%b%e' ) +
+  ylab('Daily Vaccinations') +
+  scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")
+                     , expand = c(0, 0), limits = c(0, NA))
+```
 Forecasting: 
 ```{r echo=FALSE}
 # Forecast function
-fcastfn <- function( l, c, al ){
+fcastfn <- function( l, c, al, be ){
   # bt = NULL: function tries to find
   # bt = FALSE: exponential smoothing only
   dt <- dcap %>% filter( location == l ) %>% 
@@ -95,7 +108,7 @@ fcastfn <- function( l, c, al ){
   zz <- z
   time(zz) <- seq_along(time(zz))
   # forecast model
-  sm <- HoltWinters( as.ts(zz[-(1:(nper-1))]), alpha=al, gamma=FALSE )
+  sm <- HoltWinters( as.ts(zz[-(1:(nper-1))]), alpha=al, beta=be, gamma=FALSE )
 #  sm <- HoltWinters( as.ts(zz[-(1:(nper-1))]), gamma=FALSE, optim.start=c(alpha=0.1,beta=0.1) ) 
   # tmp <- HoltWinters( as.ts(zz), alpha=0.5, beta=FALSE, gamma=FALSE )
   print( paste('location', l, 'alpha', sm$alpha, 'beta', sm$beta, 'level', sm$coefficients['a'], 'trend', sm$coefficients['b']) )
@@ -122,27 +135,30 @@ print( paste('Latest data from', latest_history_date) )
 ```
 Forecast Cumulative number of doses **distributed**
 ```{r echo=FALSE}
+f <- list( )
+```
+```{r echo=FALSE}
 print( paste('Latest data from', latest_history_date) )
-tmp <- lapply( NEstates, fcastfn, 'total_distributed', 0.07 )
-f <- list( bind_rows( tmp ) )
+tmp <- lapply( NEstates, fcastfn, 'total_distributed', NULL, NULL ) # 0.2, 0.05
+f[[1]] <- bind_rows( tmp )
 ```
 Forecast Cumulative number of doses **administered**
 ```{r echo=FALSE}
 print( paste('Latest data from', latest_history_date) )
-tmp <- lapply( NEstates, fcastfn, 'total_vaccinations', 0.2 )
+tmp <- lapply( NEstates, fcastfn, 'total_vaccinations', NULL, NULL ) # 0.07
 f[[2]] <- bind_rows( tmp ) %>% select(-date,-location)
 ```
 Forecast **Daily** number of doses **administered**
 ```{r echo=FALSE}
 print( paste('Latest data from', latest_history_date) )
 # Forecast daily vaccinations
-tmp <- lapply( NEstates, fcastfn, 'daily_vaccinations', 0.3 )
+tmp <- lapply( NEstates, fcastfn, 'daily_vaccinations', NULL, NULL ) # 0.07
 f[[3]] <- bind_rows( tmp ) %>% select(-date,-location)
 ```
 Forecast people vaccinated per capita
 ```{r echo=FALSE}
 print( paste('Latest data from', latest_history_date) )
-tmp <- lapply( NEstates, fcastfn, 'people_vaccinated_per_hundred', 0.3 )
+tmp <- lapply( NEstates, fcastfn, 'people_vaccinated_per_hundred', NULL, NULL ) # 0.07
 f[[4]] <- bind_rows( tmp ) %>% select(-date,-location)
 ```
 Bind history and prediction
@@ -246,12 +262,6 @@ for ( state in NEstates ){
 }
 ```
 
-## SAVE data for Shiny App
-```{r echo=FALSE}
-print( paste('SAVING Latest data from', latest_history_date) )
-save(dfw, latest_history_date, sites, sitecap, pop, NEstates, file='/Users/aligo/git-repos/FEMA/vaccinations/app.RData')
-```
-
 ```{r echo=FALSE}
 ## Forecast total availability and vax per state (for bar graphs) ##
 comp <- function( d ){
@@ -296,7 +306,7 @@ comp <- function( d ){
   
   # legend (colors)
   # legend must be sorted in the order they should appear in the stack
-  bars <- c('addl forecasted\nstockpile','current\nstockpile','1st dose\nforecast','2nd dose\nforecast')
+  bars <- c('addl forecasted\ndistribution','current\navailability','1st dose\nforecast','2nd dose\nforecast')
   leg <- c(bars[2],bars[1],bars[3],bars[4])
   colors<- c('#3399FF','#66CCFF', '#FF9933', '#FF5500')
   dp[dp$variable=='daily_available','variable'] <- leg[1]
@@ -305,7 +315,7 @@ comp <- function( d ){
   dp[dp$variable=='demand2nd','variable'] <- leg[4]
   
 #  print( dp )
-  ggplot(dp, aes(x=cat, y=value, fill=factor(variable, levels=bars))) + 
+  p <- ggplot(dp, aes(x=cat, y=value, fill=factor(variable, levels=bars))) + 
     geom_bar(stat = 'identity', position = 'stack') + 
     facet_wrap('~ location', nrow=2, scale='free_y' ) +
     #  scale_fill_discrete(breaks=leg) +
@@ -314,6 +324,8 @@ comp <- function( d ){
     ylab('Number of doses') +
     scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")) + 
     ggtitle( paste0(d, '-Day Projection of Doses Available and Needed')) + theme(plot.title = element_text(hjust = 0.5) )
+  
+  return( list(stock, p) )
 }
 ```
 
@@ -323,29 +335,34 @@ comp <- function( d ){
 ```{r echo=FALSE}
 print( paste('Latest data from', latest_history_date))
 ```
-## 7-day forecast of availability and administration of doses
-The following figure shows a forecast of availability and administration of doses per state for the next 7 days. The blue bars show the estimated availability of doses, where the dark blue represents the current availability estimated as $D - V - W$, where $D$ is the cumulative number of doses distributed, $V$ is the cumulative number of vaccinations, and $W$ is waste (estimated as 0.13% of the total **MAUREEN, CAN YOU ADD THE SOURCE?**), as of February 21st. The light blue bar is the forecast of doses distributed to the state within the next 7 days. The orange bars represent the forecasted number of vaccinations (light orange is the number of people expected to get the first dose of Pfizer or Moderna while the dark orange is the number expected to get the second dose).  
-Fig. 1 suggests that most New England states depend on receiving new shipments within the next 7 days (light blue) in order to be able to serve the expected number of vaccinations (orange). Rhode Island is at risk of running out of doses this week according to current trends. This is probably because of the disruptions caused by the winter storm that delayed shipments for all 50 states last week (https://www.npr.org/sections/coronavirus-live-updates/2021/02/19/969519016/extreme-winter-weather-creates-backlog-of-6-million-vaccine-doses). The only exception is New Hampshire, which will likely be able to serve this week's vaccinations with the doses already shipped and currently not administered (dark blue).  
-
-
+## 7-day forecast of dose availability and administration
 ```{r echo=FALSE}
-comp( 7 )
+tmp <- comp( 7 )
+stock7d <- tmp[[1]]
+print( stock7d )
 ```
+```{r echo=FALSE}
+tmp[[2]]
+```
+Figure 1. 7-day forecast of availability and administration of doses for the New England states. Source: CDC/Our World in data
 
-Figure 1. 7-day forecast of availability and administration of doses for the New England states. Source: CDC/Our World in data, Feb 21.
+## SAVE data for Shiny App
+```{r echo=FALSE}
+print( paste('SAVING Latest data from', latest_history_date) )
+save(dfw, latest_history_date, sites, sitecap, pop, NEstates, stock7d,  file='/Users/aligo/git-repos/FEMA/vaccinations/app.RData')
+```
 
 ## 14-day forecast of availability and administration of doses
-Figure 2 shows a forecast of availability and administration of doses per state for the next 14 days and suggests that CT, MA, RI, and VT are at risk of running out of doses within the next two weeks according to current trends. Again, this is probably because of the disruptions caused by the winter storm that delayed shipments last week. (New Hampshire and Maine will likely be able to serve the next two week's vaccinations with the doses available and expected to be received.)
-
 ```{r echo=FALSE}
-comp( 14 )
+tmp <- comp( 14 )
+print( tmp[[1]] )
 ```
-
-Figure 2. 14-day forecast of availability and administration of doses for the New England states. Source: CDC/Our World in data, Feb 21.
+```{r echo=FALSE}
+tmp[[2]]
+```
+Figure 2. 14-day forecast of availability and administration of doses for the New England states. Source: CDC/Our World in data.
 
 ## Forecasting method
-The projections above are based on the forecast of the cumulative number of doses distributed and the cumulative number of doses administered, shown in Fig. 3. Both forecasts are obtained as a linear projection of the recent trend in the cumulative totals. Note that the recent trends of CT, MA, RI and VT indicate that total vaccinations may reach the total number of doses shipped within the next week. This is because vaccinations have accelerated in the previous days in those states, while distribution has not been followed by a similar increase (possibly because of the impact of the recent snow storm). The risk of vaccine shortage may be higher for facilities which shipments may be lower and vaccinations higher than the state averages.
-
 ```{r echo=FALSE}
 colors <- c('total_distributed','total_vaccinations','daily_available')
 dp <- dfw %>% tidyr::pivot_longer( cols = all_of(colors)
@@ -358,7 +375,7 @@ ggplot( dp, aes(x = date, y=value, color=n) ) +
   geom_line() + 
   geom_vline(xintercept=latest_history_date, linetype="dashed", 
              color = "gray") +  
-  theme(axis.title.x = element_blank()) +
+  theme(axis.title.x = element_blank(), text = element_text(size=11) ) +
   scale_x_date(date_labels = '%b%e' ) +
   ylab('Number of Doses') +
   scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")
