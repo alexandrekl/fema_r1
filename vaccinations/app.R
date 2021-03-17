@@ -9,50 +9,33 @@
 
 library(dplyr)
 library(ggplot2)
-library(openxlsx)
+#library(openxlsx)
 library(shiny)
-library(shinyWidgets)
+#library(shinyWidgets)
 
-# If this variable is TRUE, shows two tabs where the first is the capacity comparison per state and the 
-# second tab is the vaccination comparison across states
+# If this variable is TRUE (FEMA Internal), shows two tabs where the first is the capacity comparison per state 
+# and the second tab is the vaccination comparison across states
 # if the variable is FALSE, only the content of the first tab is displayed
-FEMA_version <- TRUE
+FEMA_version <- FALSE
 
 theme_set( theme_bw() + theme( legend.position="bottom" ) +
                theme( legend.title=element_blank() ) )
 
-# load pre calculated data and assumptions
+# load data and assumptions pre calculated in pre_proc.Rmd
 load( 'app.RData' )
-# dfw <- dfw %>% mutate( date = as.Date(date,format='%Y-%m-%d') )
 
-# capacity assumptions
-sc <- left_join(sites, sitecap, by=c('date','location','type')) 
-
-# main dataframes
-colors <- c('daily_vaccinations','cap')
-cnames <- c('Doses administered','Max vaccination capacity')
-dp <- dfw %>% tidyr::pivot_longer( cols = all_of(colors)
-                         , names_to="s" 
-                         , values_to = "value",  values_drop_na = TRUE )
-dp <- dp %>% mutate( n = NA )
-dp$n[dp$s %in% colors] <- cnames[match(dp$s,colors)]
-
-# per capita values per state and Region 1 average
-tmp <- lapply( c('total_vaccinations_per_hundred','people_vaccinated_per_hundred')
-               , function( var ){
-                   dpc <- dfw %>% select( c('date','location',var) ) %>%
-                       tidyr::pivot_wider( names_from='location', values_from=var ) %>%
-                       mutate( avgr1 = (.[[2]]+.[[3]]+.[[4]]+ .[[5]]+ .[[6]]+ .[[7]]) /6 ) %>%
-                       tidyr::pivot_longer( cols=all_of(NEstates), names_to="location" 
-                                            , values_to = "value",  values_drop_na=FALSE ) %>%
-                       tidyr::pivot_longer( cols=c(value,avgr1), names_to="type" 
-                                            , values_to=var, values_drop_na=FALSE ) } ) 
-dpc <- bind_cols( tmp[[1]], tmp[[2]] %>% select( people_vaccinated_per_hundred ) )
-
-# forecasted growth in daily vaccinations
-dvacgr <- dfw %>% group_by( location ) %>%
-                summarise( b = last(dd_vaccinations), .groups='drop_last' )
-
+# sidebar text: R1 average
+popcols <- list('people_vaccinated_per_hundred' = 'of population vaccinated (1+ doses) in '
+            , 'people_vaccinated_per_hundredover16' = 'of population over 16 years-old vaccinated (1+ doses) in ' )
+datesdfavg <- datesdfavg %>% mutate( day = as.numeric(format(date, format='%d'))
+                    , dlabel = paste0(ifelse(day>20,'late',ifelse(day>10,'mid','early')),format(date, format=' %B')) )
+r1text <- '<p>Projections for vaccinations in FEMA Region 1: </p> <ul>'
+for( r in 1:nrow(datesdfavg) ){
+    r1text <- paste0(r1text, '<li>', datesdfavg$threshold[r], '% ', popcols[[datesdfavg$colref[r]]]
+                     , datesdfavg$dlabel[r], '</li>' )
+}
+r1text <- paste(r1text, '</ul>')
+    
 # UI
 # Panel with vaccinations and capacity
 panel1 <- function(){
@@ -122,19 +105,27 @@ ui <- fluidPage(
     if ( FEMA_version ){
         tabsetPanel(
             tabPanel('Vaccinations vs Capacity', panel1() ), 
-        tabPanel('State comparison',
+            # tabPanel('State Comparison',
+            #      sidebarLayout(
+            #          sidebarPanel( tags$style(type = "text/css", "label { font-size: 13px; }" ),
+            #          radioButtons( 'var', 'Select the variable to display on the graph:',
+            #              choices = list('Total number of doses administered per hundred people' = 'total_vaccinations_per_hundred'
+            #                             ,'Percentage of population vaccinated (1+ doses)' = 'people_vaccinated_per_hundred'),
+            #              selected = 'people_vaccinated_per_hundred', width = NULL )
+            #          ),
+            #          mainPanel( plotOutput("distPlot100k", height = "550px") )
+            #      ) ), # closing of tab with vaccinations per 100K
+            tabPanel('State Projections',
                  sidebarLayout(
                      sidebarPanel( tags$style(type = "text/css", "label { font-size: 13px; }" ),
-                     radioButtons( 'var', 'Select the variable to display on the graph:',
-                         choices = list('Total Number of Doses Administered per Hundred People' = 'total_vaccinations_per_hundred'
-                                        ,'Percentage of Population Vaccinated (1+ doses)' = 'people_vaccinated_per_hundred'),
-                         selected = 'people_vaccinated_per_hundred', width = NULL )
+                                   radioButtons( 'varP', 'Select the variable for projection:',
+                                                 choices = list('Percentage of population vaccinated (1+ doses)' = 'people_vaccinated_per_hundred'
+                                                                , 'Percentage of population over 16 years-old vaccinated (1+ doses)' = 'people_vaccinated_per_hundredover16'),
+                                                 selected = 'people_vaccinated_per_hundred', width = NULL ),
+                                   h1("____________"), HTML( r1text )
                      ),
-                     mainPanel(
-                         plotOutput("distPlot100k", height = "550px")
-                     )
-                 )
-        ) # closing of tab with vaccinations per 100K
+                     mainPanel( plotOutput("distProjection", height = "550px") )
+                     ) ) # closing of tab with Immunization thresholds
         ) # closing of tabsetPanel
     }
     else{
@@ -149,7 +140,6 @@ server <- function(input, output, session) {
         scp <- sc %>% filter( location == input$state )
         
         # Default growth in daily vaccinations
-        # print( dvacgr$b[dvacgr$location==input$state] )
         b <- max( c(dvacgr$b[dvacgr$location==input$state], 0) )
         if ( input$state %in% c('Connecticut','Massachusetts','Rhode Island') )
             bm <- 2000
@@ -162,8 +152,6 @@ server <- function(input, output, session) {
             updateNumericInput(session,paste0('N',i), value=scp[i,'Ni'], min=0, max=scp[i,'Ni']*2 )
             updateSliderInput(session, paste0('C',i), value=scp[i,'Ci'], min=0, max=scp[i,'Ci']*2 )
         }
-        
-#        print( paste("observe STATE CHANGED TO", input$state ))
         return( scp )
     })
 
@@ -196,7 +184,6 @@ server <- function(input, output, session) {
             exceed_date <- min( tmp$date )
             ymax <- max(dt$value)
             ggplot( dt, aes(x=date, y=value, color=n) ) +
-#                geom_rect( aes(xmin=exceed_date), xmax=Inf, ymin=-Inf, ymax=Inf, fill='yellow', alpha=0.1, linetype='blank' ) +
                 geom_line( size=1.5 ) +
                 geom_vline(xintercept=latest_history_date, linetype="dashed", color="gray", size=1) +
                 annotate("text", x=exceed_date-6, y=sumcap + ymax*.05, label=paste('Vaccination reaches\ncapacity on',exceed_date)) +
@@ -220,6 +207,7 @@ server <- function(input, output, session) {
                 ggtitle( input$state ) +
                 theme(plot.title = element_text(hjust = 0.5), text = element_text(size=20) )
     }) # closing of distPlot()
+    
     output$distPlot100k <- renderPlot({
         if ( input$var == 'total_vaccinations_per_hundred' )
             yl <- 'Total Number of Doses Administered per Hundred People'
@@ -237,6 +225,31 @@ server <- function(input, output, session) {
             scale_y_continuous( expand=c(0,0) ) + # label=scales::unit_format(unit="%", sep=""), 
             theme( text = element_text(size=20) )
     }) # closing of distPlot100k()
+
+    output$distProjection <- renderPlot({
+        if ( input$varP == 'people_vaccinated_per_hundred' )
+            yl <- 'Percentage of Population Vaccinated (1+ doses)'
+        else
+            yl <- 'Percentage of Population over 16 Vaccinated (1+ doses)'
+#        labels <- datesdf %>% mutate( label = paste0(threshold,'%: ',format(!!as.name(input$varP), format='%b%e')) )
+        labels <- datesdf %>% mutate( day = as.numeric(format(!!as.name(input$varP), format='%d'))
+                                , label = paste0(threshold,'%: ',ifelse(day>20,'late ',ifelse(day>10,'mid ','early ')),format(!!as.name(input$varP), format='%b')) )
+        ggplot( dpp %>% filter( !!as.symbol(input$varP) <= 100 ), aes_string(x='date', y=input$varP, color='type') ) +
+            facet_wrap(~ location, nrow=2 ) +
+            geom_vline(xintercept=latest_history_date, linetype="dashed", color="gray", size=1) +
+            geom_line( size=1.5 ) +
+            geom_point(data=datesdf, aes_string(x=input$varP, y='threshold'), shape=21, color='black', fill='white', size=3, stroke=0.5 ) +
+            geom_label(data=labels, aes_string(x=input$varP, y='threshold', label='label'), hjust=1.1, vjust=0, color='black' ) +
+            scale_color_manual( name=NULL, values=c('blue','grey'), breaks=c('value','avgr1')
+                                , labels=c('Total in state','Region 1 average') ) +
+            theme(axis.title.x = element_blank()) +
+            scale_x_date(date_labels = '%b%e', minor_breaks='month', limits=c(as.Date('2021-01-01'),as.Date('2021-09-15')) ) +
+            ylab( yl ) +
+            scale_y_continuous( #expand=c(0,10), 
+                breaks=seq(10, 100, 20), label=scales::unit_format(unit="%", sep="") ) + 
+            theme( text = element_text(size=20) )
+        
+    }) # closing of distProjection()
 }
 
 # Run the application 

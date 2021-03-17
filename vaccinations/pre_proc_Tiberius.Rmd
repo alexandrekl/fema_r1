@@ -69,7 +69,7 @@ ggplot(dp, aes(x=delay)) + geom_histogram(binwidth=1)
 ```
 Get cummulative doses in transit and distributed from Tiberius
 ```{r}
-latest_history_date <- as.Date( '2021-03-05' )
+latest_history_date <- as.Date( '2021-03-14' )
 datelst <- seq(as.Date("2020-12-10"), to=latest_history_date, by = "day")
 tmp <- lapply( datelst, function(d){
   dord <- vxord %>%
@@ -354,9 +354,9 @@ dp <- vxord %>% group_by( shipping_acl_awardee ) %>%
 
 tmp <- stock7d %>% mutate( l = 'addl forecasted distribution' )
 ggplot(dp) +
-    geom_col( data=tmp, aes(x=location, y=distrib, fill=l ), linetype='dashed', size=1, colour='#3399FF' ) +
+    geom_col( data=tmp, aes(x=location, y=distrib, fill=l ), linetype='dashed', size=0, colour='#3399FF' ) +
     scale_fill_manual( name=NULL, values=c('#66CCFF') ) +
-    ggpattern::geom_col_pattern( aes(x=shipping_acl_awardee, y=in_transit_total, pattern=l), fill='#66CCFF', pattern_fill='#66CCFF', colour='#3399FF', pattern_spacing=0.02 ) + 
+    ggpattern::geom_col_pattern( aes(x=shipping_acl_awardee, y=in_transit_total, pattern=l), fill='#66CCFF', pattern_fill='#66CCFF', size=0, pattern_colour='#3399FF', pattern_spacing=0.02 ) + 
     ggpattern::scale_pattern_manual( name=NULL, values=c('stripe') ) +
     theme(axis.title.x = element_blank()) +
     ylab('Number of doses in transit') +

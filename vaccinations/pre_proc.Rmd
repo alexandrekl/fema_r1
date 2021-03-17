@@ -5,7 +5,7 @@ output:
   word_document: default
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+This script downloads and wrangles data from the CDC/Our World in Data to update (i) the vaccination tool, and (ii) the graphs for the vaccine stockpile report.
 
 Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
 ```{r echo=FALSE}
@@ -21,8 +21,11 @@ theme_set( theme_bw() + theme( legend.position="bottom" ) +
              theme( text = element_text(size=12) ) )
 
 # Assumptions
-waste_rate <- 0.0013  # rate of doses lost
-t1st2nd <- (21+28)/2  # average time between 1st and 2nd dose
+# rate of doses lost
+# Kaitlin Volk's email on 3/15/2021: NH 0.69%, 0.08% in MA, 0.06% in RI, 0.2% in VT, ME has refused to release statistics, CT="10 doses"
+waste_rate <- 0.007 
+# average time between 1st and 2nd dose
+t1st2nd <- (21+28)/2
 
 # Constants
 dfmts <- c('%Y-%m-%d', '%m/%d/%Y')
@@ -80,7 +83,7 @@ ggplot( dp, aes(x = date, y=daily_vaccinations) ) +
   theme(axis.title.x = element_blank()) +
   scale_x_date(date_labels = '%b%e' ) +
   ylab('Daily Vaccinations') +
-  ggtitle( paste('Latest data from', latest_history_date) ) +
+#  ggtitle( paste('Latest data from', latest_history_date) ) +
   scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")
                      , expand = c(0, 0), limits = c(0, NA))
 ```
@@ -102,6 +105,9 @@ Forecasting:
 fcastfn <- function( l, c, al, be ){
   # bt = NULL: function tries to find
   # bt = FALSE: exponential smoothing only
+  
+  fdays <- as.Date('2021-10-01') - latest_history_date # number of days to forecast
+  
   dt <- dcap %>% filter( location == l ) %>% 
     select( all_of(c('date',c)) ) 
   z <- read.zoo( dt )
@@ -112,9 +118,9 @@ fcastfn <- function( l, c, al, be ){
 #  sm <- HoltWinters( as.ts(zz[-(1:(nper-1))]), gamma=FALSE, optim.start=c(alpha=0.1,beta=0.1) ) 
   # tmp <- HoltWinters( as.ts(zz), alpha=0.5, beta=FALSE, gamma=FALSE )
   print( paste('location', l, 'alpha', sm$alpha, 'beta', sm$beta, 'level', sm$coefficients['a'], 'trend', sm$coefficients['b']) )
-  pr <- predict(sm, 14, prediction.interval=TRUE, level = 0.95)
+  pr <- predict(sm, fdays, prediction.interval=TRUE, level = 0.95)
 #  plot(sm, pr)
-  dates <- seq(max(dt$date)+1, by = "day", length.out = 14)
+  dates <- seq(max(dt$date)+1, by = "day", length.out = fdays)
   prdf <- data.frame( dates, pr ) 
   prdf[prdf < 0] <- 0    # override negative predictions
   cols <- paste0(c, '_', colnames(prdf[1,-1]))
@@ -179,8 +185,8 @@ print( paste0('\'Availability\' = [Cumulative number of doses distributed] - [Cu
 ```
 ```{r echo=FALSE}
 colors <- c('total_distributed','total_vaccinations','daily_available')
-dp <- dfw %>% tidyr::pivot_longer( cols = all_of(colors)
-                                   , names_to="s", values_to="value", values_drop_na=TRUE )
+dp <- dfw %>% filter( date <= (latest_history_date+14) ) %>%
+  tidyr::pivot_longer( cols = all_of(colors), names_to="s", values_to="value", values_drop_na=TRUE )
 cnames <- c('Distributed','Administered','Availability')
 dp <- dp %>% mutate( n = NA )
 dp$n[dp$s %in% colors] <- cnames[match(dp$s,colors)]
@@ -191,7 +197,7 @@ ggplot( dp, aes(x = date, y=value, color=n) ) +
              color = "gray") +  
   ggtitle( paste('Latest data from', latest_history_date) ) +
   theme(axis.title.x = element_blank()) +
-  scale_x_date(date_labels = '%b%e' ) +
+  scale_x_date( date_labels = '%b%e' ) +
   ylab('Cummulative Number of Doses') +
   scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")
                      , expand = c(0, 0), limits = c(0, NA))
@@ -224,7 +230,7 @@ for ( state in NEstates )
           ] <- sc$cap[sc$location==state]
 
 colors <- c('daily_available','daily_vaccinations','cap')
-dp <- dfw %>%
+dp <- dfw %>% filter( date <= (latest_history_date+14) ) %>%
 #  mutate( supply_daily = zoo::rollmean(supply_daily, k=7, fill=0, align="right") ) %>% 
   tidyr::pivot_longer( cols = all_of(colors)
                        , names_to="s" 
@@ -346,10 +352,69 @@ tmp[[2]]
 ```
 Figure 1. 7-day forecast of availability and administration of doses for the New England states. Source: CDC/Our World in data
 
-## SAVE data for Shiny App
+# CALCULATIONS for Shiny App
+```{r}
+# capacity assumptions
+sc <- left_join(sites, sitecap, by=c('date','location','type')) 
+
+# main dataframes
+colors <- c('daily_vaccinations','cap')
+cnames <- c('Doses administered','Max vaccination capacity')
+dp <- dfw %>% filter( date <= (latest_history_date+14) ) %>% 
+    tidyr::pivot_longer( cols = all_of(colors), names_to="s" 
+                         , values_to = "value",  values_drop_na = TRUE )
+dp <- dp %>% mutate( n = NA )
+dp$n[dp$s %in% colors] <- cnames[match(dp$s,colors)]
+
+# per capita values per state and Region 1 average
+dpp <- data.frame()
+for( var in c('total_vaccinations_per_hundred','people_vaccinated_per_hundred') ){
+  tmp <- dfw %>% select( c('date','location',all_of(var)) ) %>%
+                       tidyr::pivot_wider( names_from='location', values_from=var ) %>%
+                       mutate( avgr1 = (.[[2]]+.[[3]]+.[[4]]+ .[[5]]+ .[[6]]+ .[[7]]) /6 ) %>%
+                       tidyr::pivot_longer( cols=all_of(NEstates), names_to="location" 
+                                            , values_to = "value",  values_drop_na=FALSE ) %>%
+                       tidyr::pivot_longer( cols=c(value,avgr1), names_to="type" 
+                                            , values_to=var, values_drop_na=FALSE ) 
+  if ( nrow(dpp) == 0 )
+    dpp <- tmp
+  else
+    dpp[,var] <- tmp[,var]
+}
+dpc <- dpp %>% filter( date <= (latest_history_date+14) )
+
+# Perc people vaccinated over 16 yr old
+perc_pop_over16 <- data.frame( state = NEstates,
+                               perc_over16 = c(.821, .837, .827, .836, .83, .84) )
+for ( st in NEstates ){
+  idx <- dpp$location == st
+  dpp$people_vaccinated_per_hundredover16[idx] <- dpp$people_vaccinated_per_hundred[idx] / perc_pop_over16$perc_over16[perc_pop_over16$state==st]
+}
+  
+# dates where given vars will exceed given percentages of population
+calc_threshold_dates <- function(st, vartype){
+  tmp <- lapply( c('people_vaccinated_per_hundred','people_vaccinated_per_hundredover16'), function(colref){
+    thrs <- c(70, 90)
+    dates <- sapply( thrs, function(threshold){
+      datetmp <- dpp %>% filter( type==vartype & location==st & !!as.symbol(colref)>=threshold )
+      stopifnot( nrow(datetmp) > 0 )
+      return( min( datetmp$date ) )
+    } )
+    return( data.frame( location=st, type=vartype, colref, threshold=thrs, date=as.Date(dates) ) )
+  } ) %>% bind_rows()
+}
+datesdf <- lapply( NEstates, calc_threshold_dates, 'value' ) %>% bind_rows() %>% tidyr::pivot_wider( names_from=colref, values_from=date )
+datesdfavg <- calc_threshold_dates( 'Connecticut', 'avgr1' )
+
+# forecasted growth in daily vaccinations
+dvacgr <- dfw %>% group_by( location ) %>%
+                summarise( b = last(dd_vaccinations), .groups='drop_last' )
+```
+
+## SAVE data for Shiny App app.R and for in-transit graph of pre_proc_Tiberius.Rmd
 ```{r echo=FALSE}
 print( paste('SAVING Latest data from', latest_history_date) )
-save(dfw, latest_history_date, sites, sitecap, pop, NEstates, stock7d,  file='/Users/aligo/git-repos/FEMA/vaccinations/app.RData')
+save(dfw, dp, dpp, dpc, datesdf, datesdfavg, dvacgr, latest_history_date, sc, pop, NEstates, stock7d,  file='/Users/aligo/git-repos/FEMA/vaccinations/app.RData')
 ```
 
 ## 14-day forecast of availability and administration of doses
@@ -365,8 +430,8 @@ Figure 2. 14-day forecast of availability and administration of doses for the Ne
 ## Forecasting method
 ```{r echo=FALSE}
 colors <- c('total_distributed','total_vaccinations','daily_available')
-dp <- dfw %>% tidyr::pivot_longer( cols = all_of(colors)
-                                   , names_to="s", values_to="value", values_drop_na=TRUE )
+dp <- dfw %>% filter( date <= (latest_history_date+14) ) %>%
+  tidyr::pivot_longer( cols = all_of(colors), names_to="s", values_to="value", values_drop_na=TRUE )
 cnames <- c('Cumulative Distributed','Cumulative Administered','Availability')
 dp <- dp %>% mutate( n = NA )
 dp$n[dp$s %in% colors] <- cnames[match(dp$s,colors)]
