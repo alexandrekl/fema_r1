@@ -9,6 +9,11 @@ This script downloads and wrangles data from the CDC/Our World in Data to update
 
 Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
 ```{r echo=FALSE}
+getwd()
+# Alex, it looks like it goes right to the vaccinations folder, so if I exclude prefixes, it should work on both machines
+```
+
+```{r echo=FALSE}
 ### Load data from Our World in Data
 library(dplyr)
 library(zoo)
@@ -34,8 +39,10 @@ nper <- 14 # days to smooth supply
 
 # truth URL from the CDC ensemble 
 vurl <- 'https://raw.githubusercontent.com/owid/covid-19-data/master/public/data/vaccinations/us_state_vaccinations.csv'
-df <- read.csv( vurl ) 
+df <- read.csv( vurl )
+save(df, file = "data/owid.rda")
 ```
+
 ```{r echo=FALSE}
 # Calculate daily history
 # (current capacity to administer doses per day is in daily_vaccinations - 7-day moving avg)
@@ -217,7 +224,8 @@ ggplot( dp, aes(x = date, y=people_vaccinated_per_hundred) ) +
 ## MAXIMUM CAPACITY
 ```{r echo=FALSE}
 # calculate maximum capacity to administer doses per day (assumed constant)
-fname <- '/Users/aligo/Downloads/FEMA recovery data/vaccine capacity.xlsx'
+fname <- '/data/vaccine capacity.xlsx'
+#fname <- '/Users/aligo/Downloads/FEMA recovery data/vaccine capacity.xlsx'
 sites <- read.xlsx( fname, sheet = 1, detectDates=TRUE )
 sitecap <- read.xlsx( fname, sheet = 2, detectDates=TRUE )
 
@@ -414,7 +422,8 @@ dvacgr <- dfw %>% group_by( location ) %>%
 ## SAVE data for Shiny App app.R and for in-transit graph of pre_proc_Tiberius.Rmd
 ```{r echo=FALSE}
 print( paste('SAVING Latest data from', latest_history_date) )
-save(dfw, dp, dpp, dpc, datesdf, datesdfavg, dvacgr, latest_history_date, sc, pop, NEstates, stock7d,  file='/Users/aligo/git-repos/FEMA/vaccinations/app.RData')
+#save(dfw, dp, dpp, dpc, datesdf, datesdfavg, dvacgr, latest_history_date, sc, pop, NEstates, stock7d,  file='/Users/aligo/git-repos/FEMA/vaccinations/app.RData')
+save(dfw, dp, dpp, dpc, datesdf, datesdfavg, dvacgr, latest_history_date, sc, pop, NEstates, stock7d,  file='/app/app.RData')
 ```
 
 ## 14-day forecast of availability and administration of doses
