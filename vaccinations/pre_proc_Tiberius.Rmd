@@ -69,7 +69,7 @@ ggplot(dp, aes(x=delay)) + geom_histogram(binwidth=1)
 ```
 Get cummulative doses in transit and distributed from Tiberius
 ```{r}
-latest_history_date <- as.Date( '2021-03-14' )
+latest_history_date <- as.Date( '2021-03-22' )
 datelst <- seq(as.Date("2020-12-10"), to=latest_history_date, by = "day")
 tmp <- lapply( datelst, function(d){
   dord <- vxord %>%
@@ -241,7 +241,7 @@ comp <- function( d ){
   # This function calculates availability and required doses for the next d days
 
   # Assumptions
-  waste_rate <- 0.0013  # rate of doses lost
+  waste_rate <- 0.007  # rate of doses lost
 
   # current stockpile: daily_available = total_distributed*(1-waste_rate) - total_vaccinations, all at latest_history_date
   # Number of people who will need a 2nd dose within d days: demand2nd = total_2nd(latest_history_date+d) - total_2nd(latest_history_date)
