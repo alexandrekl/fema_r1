@@ -9,14 +9,13 @@
 
 library(dplyr)
 library(ggplot2)
-#library(openxlsx)
 library(shiny)
 #library(shinyWidgets)
 
 # If this variable is TRUE (FEMA Internal), shows two tabs where the first is the capacity comparison per state 
 # and the second tab is the vaccination comparison across states
 # if the variable is FALSE, only the content of the first tab is displayed
-FEMA_version <- TRUE
+FEMA_version <- FALSE
 
 theme_set( theme_bw() + theme( legend.position="bottom" ) +
                theme( legend.title=element_blank() ) )
@@ -101,7 +100,7 @@ panel1 <- function(){
     
 ui <- fluidPage(
     # Application title
-    titlePanel("New England Vaccinations"),
+    titlePanel(paste0("New England Vaccinations (", latest_history_date, " data)")),
     if ( FEMA_version ){
         tabsetPanel(
             tabPanel('Vaccinations vs Capacity', panel1() ), 

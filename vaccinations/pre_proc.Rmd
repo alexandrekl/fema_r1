@@ -113,7 +113,7 @@ fcastfn <- function( l, c, al, be ){
   # bt = NULL: function tries to find
   # bt = FALSE: exponential smoothing only
   
-  fdays <- as.Date('2021-10-01') - latest_history_date # number of days to forecast
+  fdays <- as.Date('2021-10-15') - latest_history_date # number of days to forecast
   
   dt <- dcap %>% filter( location == l ) %>% 
     select( all_of(c('date',c)) ) 
@@ -165,13 +165,13 @@ Forecast **Daily** number of doses **administered**
 ```{r echo=FALSE}
 print( paste('Latest data from', latest_history_date) )
 # Forecast daily vaccinations
-tmp <- lapply( NEstates, fcastfn, 'daily_vaccinations', NULL, NULL ) # 0.07
+tmp <- lapply( NEstates, fcastfn, 'daily_vaccinations', 0.9, NULL ) # 0.07
 f[[3]] <- bind_rows( tmp ) %>% select(-date,-location)
 ```
 Forecast people vaccinated per capita
 ```{r echo=FALSE}
 print( paste('Latest data from', latest_history_date) )
-tmp <- lapply( NEstates, fcastfn, 'people_vaccinated_per_hundred', NULL, NULL ) # 0.07
+tmp <- lapply( NEstates, fcastfn, 'people_vaccinated_per_hundred', NULL, 0.2 ) # 0.07
 f[[4]] <- bind_rows( tmp ) %>% select(-date,-location)
 ```
 Bind history and prediction
@@ -224,7 +224,7 @@ ggplot( dp, aes(x = date, y=people_vaccinated_per_hundred) ) +
 ## MAXIMUM CAPACITY
 ```{r echo=FALSE}
 # calculate maximum capacity to administer doses per day (assumed constant)
-fname <- '/data/vaccine capacity.xlsx'
+fname <- 'data/vaccine capacity.xlsx'
 #fname <- '/Users/aligo/Downloads/FEMA recovery data/vaccine capacity.xlsx'
 sites <- read.xlsx( fname, sheet = 1, detectDates=TRUE )
 sitecap <- read.xlsx( fname, sheet = 2, detectDates=TRUE )
@@ -418,12 +418,18 @@ datesdfavg <- calc_threshold_dates( 'Connecticut', 'avgr1' )
 dvacgr <- dfw %>% group_by( location ) %>%
                 summarise( b = last(dd_vaccinations), .groups='drop_last' )
 ```
+```{r}
+# test only
+tmp <- dpp %>% filter( type=='value' & location==NEstates[4]  )
+tmp
+```
+
 
 ## SAVE data for Shiny App app.R and for in-transit graph of pre_proc_Tiberius.Rmd
 ```{r echo=FALSE}
 print( paste('SAVING Latest data from', latest_history_date) )
 #save(dfw, dp, dpp, dpc, datesdf, datesdfavg, dvacgr, latest_history_date, sc, pop, NEstates, stock7d,  file='/Users/aligo/git-repos/FEMA/vaccinations/app.RData')
-save(dfw, dp, dpp, dpc, datesdf, datesdfavg, dvacgr, latest_history_date, sc, pop, NEstates, stock7d,  file='/app/app.RData')
+save(dfw, dp, dpp, dpc, datesdf, datesdfavg, dvacgr, latest_history_date, sc, pop, NEstates, stock7d,  file='app/app.RData')
 ```
 
 ## 14-day forecast of availability and administration of doses
