@@ -43,8 +43,8 @@ df <- read.csv( vurl )
 save(df, file = "data/owid.rda")
 ```
 
+Calculate daily history
 ```{r echo=FALSE}
-# Calculate daily history
 # (current capacity to administer doses per day is in daily_vaccinations - 7-day moving avg)
 dcap <- df %>% filter( location %in% NEstates ) %>% 
   group_by( location ) %>%
@@ -56,10 +56,10 @@ dcap <- df %>% filter( location %in% NEstates ) %>%
           # , daily_available_avg = rollmean(daily_available, k=nper, fill=NA, align="right") # total availability level IGNORING WASTE
   ) %>% ungroup()
 latest_history_date <- max(dcap$date)
+print( paste('Latest data from', latest_history_date) )
 ```
 ```{r echo=FALSE}
 ### Totals ###
-print( paste('Latest data from', latest_history_date) )
 tmp <- lapply( NEstates, function( state ){
   idx <- dcap$location==state & dcap$date==latest_history_date
   print( paste('Total Administered', state, dcap$total_vaccinations[idx]) )
@@ -83,7 +83,7 @@ print(pop)
 ```
 Plot daily_vaccinations (it is already 7-day smoothed in the original data)
 ```{r echo=FALSE}
-dp <- dcap %>% select(date,location,daily_vaccinations) 
+dp <- dcap %>% filter( date >= "2021-03-01" ) %>% select(date,location,daily_vaccinations) 
 ggplot( dp, aes(x = date, y=daily_vaccinations) ) +
   facet_wrap(~ location, nrow=2, scale='free_y' ) +
   geom_line() + 
@@ -94,17 +94,19 @@ ggplot( dp, aes(x = date, y=daily_vaccinations) ) +
   scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")
                      , expand = c(0, 0), limits = c(0, NA))
 ```
-Plot same as above but the the last 2 weeks
+Plot distribution in the last weeks
 ```{r echo=FALSE}
-dp <- dcap %>% filter( date >= (latest_history_date-14) ) %>% select(date,location,daily_vaccinations) 
-ggplot( dp, aes(x = date, y=daily_vaccinations) ) +
+dp <- dcap %>% filter( date >= "2020-01-01" ) %>% # select(date,location,daily_vaccinations) 
+                group_by( location ) %>%
+                mutate( dd_dist  = total_distributed - lag(total_distributed, 7) )
+ggplot( dp, aes(x = date, y=dd_dist) ) +
   facet_wrap('~ location', nrow=2, scale='free_y' ) +
   geom_line() + 
   theme(axis.title.x = element_blank()) +
   scale_x_date(date_labels = '%b%e' ) +
-  ylab('Daily Vaccinations') +
-  scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "")
-                     , expand = c(0, 0), limits = c(0, NA))
+  ylab('Doses distributed per week') +
+  scale_y_continuous(label = scales::unit_format(unit = "K", scale = 1e-3, sep = "") #, expand = c(0, 0), limits = c(0, NA)
+                     )
 ```
 Forecasting: 
 ```{r echo=FALSE}
@@ -113,7 +115,7 @@ fcastfn <- function( l, c, al, be ){
   # bt = NULL: function tries to find
   # bt = FALSE: exponential smoothing only
   
-  fdays <- as.Date('2021-10-01') - latest_history_date # number of days to forecast
+  fdays <- as.Date('2021-10-15') - latest_history_date # number of days to forecast
   
   dt <- dcap %>% filter( location == l ) %>% 
     select( all_of(c('date',c)) ) 
@@ -146,32 +148,34 @@ fcastfn <- function( l, c, al, be ){
 #tmp <- lapply( NEstates, fcastfn, 'daily_available_avg' )
 print( paste('Latest data from', latest_history_date) )
 ```
-Forecast Cumulative number of doses **distributed**
+Forecasts
 ```{r echo=FALSE}
 f <- list( )
+beta_vaccinations <- 0.03 # Beta forced because of recent spikes in NH
 ```
+Forecast Cumulative number of doses **distributed**
 ```{r echo=FALSE}
 print( paste('Latest data from', latest_history_date) )
-tmp <- lapply( NEstates, fcastfn, 'total_distributed', NULL, NULL ) # 0.2, 0.05
+tmp <- lapply( NEstates, fcastfn, 'total_distributed', NULL, NULL ) 
 f[[1]] <- bind_rows( tmp )
 ```
 Forecast Cumulative number of doses **administered**
 ```{r echo=FALSE}
 print( paste('Latest data from', latest_history_date) )
-tmp <- lapply( NEstates, fcastfn, 'total_vaccinations', NULL, NULL ) # 0.07
+tmp <- lapply( NEstates, fcastfn, 'total_vaccinations', NULL, beta_vaccinations ) 
 f[[2]] <- bind_rows( tmp ) %>% select(-date,-location)
 ```
 Forecast **Daily** number of doses **administered**
 ```{r echo=FALSE}
 print( paste('Latest data from', latest_history_date) )
 # Forecast daily vaccinations
-tmp <- lapply( NEstates, fcastfn, 'daily_vaccinations', NULL, NULL ) # 0.07
+tmp <- lapply( NEstates, fcastfn, 'daily_vaccinations', NULL, beta_vaccinations ) 
 f[[3]] <- bind_rows( tmp ) %>% select(-date,-location)
 ```
 Forecast people vaccinated per capita
 ```{r echo=FALSE}
 print( paste('Latest data from', latest_history_date) )
-tmp <- lapply( NEstates, fcastfn, 'people_vaccinated_per_hundred', NULL, NULL ) # 0.07
+tmp <- lapply( NEstates, fcastfn, 'people_vaccinated_per_hundred', NULL, beta_vaccinations )
 f[[4]] <- bind_rows( tmp ) %>% select(-date,-location)
 ```
 Bind history and prediction
@@ -224,7 +228,7 @@ ggplot( dp, aes(x = date, y=people_vaccinated_per_hundred) ) +
 ## MAXIMUM CAPACITY
 ```{r echo=FALSE}
 # calculate maximum capacity to administer doses per day (assumed constant)
-fname <- '/data/vaccine capacity.xlsx'
+fname <- 'data/vaccine capacity.xlsx'
 #fname <- '/Users/aligo/Downloads/FEMA recovery data/vaccine capacity.xlsx'
 sites <- read.xlsx( fname, sheet = 1, detectDates=TRUE )
 sitecap <- read.xlsx( fname, sheet = 2, detectDates=TRUE )
@@ -418,12 +422,18 @@ datesdfavg <- calc_threshold_dates( 'Connecticut', 'avgr1' )
 dvacgr <- dfw %>% group_by( location ) %>%
                 summarise( b = last(dd_vaccinations), .groups='drop_last' )
 ```
+```{r}
+# test only
+tmp <- dpp %>% filter( type=='value' & location==NEstates[4]  )
+tmp
+```
+
 
 ## SAVE data for Shiny App app.R and for in-transit graph of pre_proc_Tiberius.Rmd
 ```{r echo=FALSE}
 print( paste('SAVING Latest data from', latest_history_date) )
 #save(dfw, dp, dpp, dpc, datesdf, datesdfavg, dvacgr, latest_history_date, sc, pop, NEstates, stock7d,  file='/Users/aligo/git-repos/FEMA/vaccinations/app.RData')
-save(dfw, dp, dpp, dpc, datesdf, datesdfavg, dvacgr, latest_history_date, sc, pop, NEstates, stock7d,  file='/app/app.RData')
+save(dfw, dp, dpp, dpc, datesdf, datesdfavg, dvacgr, latest_history_date, sc, pop, NEstates, stock7d,  file='app/app.RData')
 ```
 
 ## 14-day forecast of availability and administration of doses

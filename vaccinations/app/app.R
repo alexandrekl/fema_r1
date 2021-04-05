@@ -9,7 +9,6 @@
 
 library(dplyr)
 library(ggplot2)
-#library(openxlsx)
 library(shiny)
 #library(shinyWidgets)
 
@@ -101,7 +100,7 @@ panel1 <- function(){
     
 ui <- fluidPage(
     # Application title
-    titlePanel("New England Vaccinations"),
+    titlePanel(paste0("New England Vaccinations (", latest_history_date, " data)")),
     if ( FEMA_version ){
         tabsetPanel(
             tabPanel('Vaccinations vs Capacity', panel1() ), 
