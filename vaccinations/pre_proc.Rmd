@@ -151,7 +151,7 @@ print( paste('Latest data from', latest_history_date) )
 Forecasts
 ```{r echo=FALSE}
 f <- list( )
-beta_vaccinations <- 0.03 # Beta forced because of recent spikes in NH
+beta_vaccinations <- 0.03 # force trend smoothing to avoid algorithm non-convergence
 ```
 Forecast Cumulative number of doses **distributed**
 ```{r echo=FALSE}
@@ -316,6 +316,16 @@ comp <- function( d ){
   # which stack each total shows in
   dp[grepl('^demand',dp$variable),'cat'] <- 'Needed'
   
+  # ADJUSTMENT IN DISTRIBUTED DOSES
+  # Fraction of janssen in total distribution in the 14-day period ending in 4/12/2021 (Tiberius)
+  # jj_distrib <- c(0.17877248, 0.18770591, 0.17958544, 0.23517825, 0.19731089, 0.21438451)
+  # for ( i in 1:6 ){
+  #    idx <- dp$location==NEstates[i] & dp$variable=='daily_available'
+  #    dp[idx,'value'] <- dp[idx,'value'] * ( 1 - jj_distrib[i] )
+  #    idx <- dp$location==NEstates[i] & dp$variable=='distrib'
+  #    dp[idx,'value'] <- dp[idx,'value'] * ( 1 - jj_distrib[i] )
+  # }
+    
   # code to choose colors to use
   # hex_codes <- scales::dichromat_pal("BluetoOrange.10")(10)   # Identify hex codes
   # dichromat_pal("BluetoOrange.10")(5)
@@ -382,7 +392,7 @@ dp$n[dp$s %in% colors] <- cnames[match(dp$s,colors)]
 dpp <- data.frame()
 for( var in c('total_vaccinations_per_hundred','people_vaccinated_per_hundred') ){
   tmp <- dfw %>% select( c('date','location',all_of(var)) ) %>%
-                       tidyr::pivot_wider( names_from='location', values_from=var ) %>%
+                       tidyr::pivot_wider( names_from='location', values_from=all_of(var) ) %>%
                        mutate( avgr1 = (.[[2]]+.[[3]]+.[[4]]+ .[[5]]+ .[[6]]+ .[[7]]) /6 ) %>%
                        tidyr::pivot_longer( cols=all_of(NEstates), names_to="location" 
                                             , values_to = "value",  values_drop_na=FALSE ) %>%
@@ -422,8 +432,8 @@ datesdfavg <- calc_threshold_dates( 'Connecticut', 'avgr1' )
 dvacgr <- dfw %>% group_by( location ) %>%
                 summarise( b = last(dd_vaccinations), .groups='drop_last' )
 ```
+test only
 ```{r}
-# test only
 tmp <- dpp %>% filter( type=='value' & location==NEstates[4]  )
 tmp
 ```
