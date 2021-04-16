@@ -129,8 +129,8 @@ ggplot( vxordd, aes(x=first_delivery_date, y=day_deliv_avg, color=vax_manufactur
             scale_y_continuous(limits=c(0,NA), label=scales::unit_format(unit="K", scale=1e-3, sep="") )
 ```
 
+### Stacked + percent bars
 ```{r, fig.width = 8, fig.height = 4}
-# Stacked + percent
 dlabels = seq(as.Date("2021-01-11"), as.Date("2021-04-12"), "2 weeks")
 vxordw <- vxord %>% filter( first_delivery_date>"2020-01-01" )
 vxordw$ft <- sapply( vxordw$first_delivery_date, function(x) dlabels[which(abs(as.numeric(dlabels-x)) == min(abs(as.numeric(dlabels-x))))[1]] )
