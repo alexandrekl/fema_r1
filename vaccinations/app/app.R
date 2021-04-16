@@ -15,7 +15,7 @@ library(shiny)
 # If this variable is TRUE (FEMA Internal), shows two tabs where the first is the capacity comparison per state 
 # and the second tab is the vaccination comparison across states
 # if the variable is FALSE, only the content of the first tab is displayed
-FEMA_version <- TRUE
+FEMA_version <- FALSE
 
 theme_set( theme_bw() + theme( legend.position="bottom" ) +
                theme( legend.title=element_blank() ) )
