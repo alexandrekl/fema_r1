@@ -55,7 +55,7 @@ dcap <- df %>% filter( location %in% NEstates ) %>%
           # , daily_available = total_distributed*(1-waste_rate) - total_vaccinations # total availability level IGNORING WASTE
           # , daily_available_avg = rollmean(daily_available, k=nper, fill=NA, align="right") # total availability level IGNORING WASTE
   ) %>% ungroup()
-latest_history_date <- as.Date('2021-04-12') # max(dcap$date)
+latest_history_date <- max(dcap$date)
 print( paste('Latest data from', latest_history_date) )
 ```
 ```{r echo=FALSE}
