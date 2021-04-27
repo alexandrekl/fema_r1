@@ -124,14 +124,14 @@ ggplot( vxordd, aes(x=first_delivery_date, y=day_deliv, color=vax_manufacturer) 
 ggplot( vxordd, aes(x=first_delivery_date, y=day_deliv_avg, color=vax_manufacturer) ) +
             facet_wrap(~ shipping_acl_awardee, ncol=3, scales='free_y' ) +
             geom_point() +
-            scale_x_date( name=NULL, limits=c(as.Date('2021-02-15'),as.Date('2021-04-15')), date_labels = '%b%e' ) +
+            scale_x_date( name=NULL, limits=c(as.Date('2021-03-15'),NA), date_labels = '%b%e' ) +
             ylab( 'Doses delivered per day (7-day moving average)' ) +
             scale_y_continuous(limits=c(0,NA), label=scales::unit_format(unit="K", scale=1e-3, sep="") )
 ```
 
 ### Stacked + percent bars
 ```{r, fig.width = 8, fig.height = 4}
-dlabels = seq(as.Date("2021-01-11"), as.Date("2021-04-12"), "2 weeks")
+dlabels = seq(as.Date("2021-01-25"), as.Date("2021-04-26"), "2 weeks")
 vxordw <- vxord %>% filter( first_delivery_date>"2020-01-01" )
 vxordw$ft <- sapply( vxordw$first_delivery_date, function(x) dlabels[which(abs(as.numeric(dlabels-x)) == min(abs(as.numeric(dlabels-x))))[1]] )
 vxordw$ft <- as.Date(vxordw$ft)
@@ -149,7 +149,7 @@ ggplot(vxordw, aes(fill=vax_manufacturer, y=ft_deliv_ratio, x=ft)) +
     facet_wrap(~ shipping_acl_awardee, ncol=3 ) +
     geom_col() +
     geom_text( aes( y = 1.06, label = dtotlabel ), size=2.5 ) +
-    scale_x_date( name=NULL, limits=c(as.Date('2021-02-12'),as.Date('2021-04-15')), breaks=dlabels, date_labels = '%b%e' ) + 
+    scale_x_date( name=NULL, limits=c(as.Date('2021-02-26'),as.Date('2021-04-29')), breaks=dlabels, date_labels = '%b%e' ) + 
     scale_y_continuous( name='Doses delivered per 14-day period', limits=c(0,NA), label=scales::percent )
 ```
 
