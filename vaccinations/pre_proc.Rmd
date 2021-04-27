@@ -58,6 +58,7 @@ dcap <- df %>% filter( location %in% NEstates ) %>%
 latest_history_date <- max(dcap$date)
 print( paste('Latest data from', latest_history_date) )
 ```
+
 ```{r echo=FALSE}
 ### Totals ###
 tmp <- lapply( NEstates, function( state ){
@@ -151,30 +152,23 @@ print( paste('Latest data from', latest_history_date) )
 Forecasts
 ```{r echo=FALSE}
 f <- list( )
-beta_vaccinations <- 0.03 # force trend smoothing to avoid algorithm non-convergence
+beta_vaccinations <- NULL # force trend smoothing to avoid algorithm non-convergence
 ```
-Forecast Cumulative number of doses **distributed**
+
 ```{r echo=FALSE}
-print( paste('Latest data from', latest_history_date) )
+print( paste('Latest data from', latest_history_date, 'Forecast Cumulative number of doses **distributed**') )
 tmp <- lapply( NEstates, fcastfn, 'total_distributed', NULL, NULL ) 
 f[[1]] <- bind_rows( tmp )
-```
-Forecast Cumulative number of doses **administered**
-```{r echo=FALSE}
-print( paste('Latest data from', latest_history_date) )
+
+print( paste('Latest data from', latest_history_date, 'Forecast Cumulative number of doses **administered**' ) )
 tmp <- lapply( NEstates, fcastfn, 'total_vaccinations', NULL, beta_vaccinations ) 
 f[[2]] <- bind_rows( tmp ) %>% select(-date,-location)
-```
-Forecast **Daily** number of doses **administered**
-```{r echo=FALSE}
-print( paste('Latest data from', latest_history_date) )
-# Forecast daily vaccinations
+
+print( paste('Latest data from', latest_history_date, 'Forecast **Daily** number of doses **administered**') )
 tmp <- lapply( NEstates, fcastfn, 'daily_vaccinations', NULL, beta_vaccinations ) 
 f[[3]] <- bind_rows( tmp ) %>% select(-date,-location)
-```
-Forecast people vaccinated per capita
-```{r echo=FALSE}
-print( paste('Latest data from', latest_history_date) )
+
+print( paste('Latest data from', latest_history_date, 'Forecast people vaccinated per capita' ) )
 tmp <- lapply( NEstates, fcastfn, 'people_vaccinated_per_hundred', NULL, beta_vaccinations )
 f[[4]] <- bind_rows( tmp ) %>% select(-date,-location)
 ```

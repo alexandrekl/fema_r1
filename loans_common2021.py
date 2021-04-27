@@ -11,7 +11,7 @@ import glob
 import pandas as pd
 import zipfile
 import numpy as np
-import fuzzymatcher
+#import fuzzymatcher
 
 
 NEstates = ['CT','MA','ME','NH','RI','VT']
@@ -79,14 +79,71 @@ def MatchLoanDraws(loans):
     print( 'ProcessingMethod', loans['ProcessingMethod'].unique() )
     
     import recordlinkage
-    l1 = loans[(loans['ProcessingMethod']=='PPP')]
-    l2 = loans[(loans['ProcessingMethod']=='PPS')]  #[['LoanNumber',id_cols,'CurrentApprovalAmount']]
+    import recordlinkage.preprocessing
+    import datetime
 
+    # cleaning
+    loansc = loans.assign( BorrowerNameC = recordlinkage.preprocessing.clean(loans['BorrowerName'])
+                          , BorrowerAddressC = recordlinkage.preprocessing.clean(loans['BorrowerAddress'])
+                          , BorrowerCityC = recordlinkage.preprocessing.clean(loans['BorrowerCity'])
+                          , Zip5 = recordlinkage.preprocessing.clean(loans['BorrowerCity']).str.slice(0,5) 
+                    ).set_index('LoanNumber')
+                     
+    l1 = loansc[loansc['ProcessingMethod']=='PPP']                            # DEBUG
+    l2 = loansc[(loansc['ProcessingMethod']=='PPS')] # & (pd.to_datetime(loansc['DateApproved'])>'2021-01-25')]
+    print( f'{l1.shape[0]:,} 1st draws and {l2.shape[0]:,} second draws to match' )
+        
+    # block by city
     indexer = recordlinkage.Index()
-    indexer.block(left_on='BorrowerState', right_on='BorrowerState')
-    id_cols = ["LoanNumber","BorrowerCity", "BorrowerState"]
-    candidates = indexer.index(l1[id_cols], l2[id_cols])
-    print(f'Number of pairs to match: {len(candidates):,}')
+    blk_cols = ['StateAbb','BorrowerCityC']
+    indexer.block(left_on=blk_cols, right_on=blk_cols)
+    candidates = indexer.index(l1, l2)        
+    print( f'MatchLoanDraws for block {blk_cols} at {datetime.datetime.now().time():%H:%M:%S}; Number of pairs to match: {len(candidates):,} (takes 8 min for 60 million pairs)' )
+    
+    compare = recordlinkage.Compare( n_jobs=5 )
+    compare.string('BorrowerNameC', 'BorrowerNameC', threshold=0.85, label='BorrowerName')
+    compare.string('BorrowerAddressC', 'BorrowerAddressC', # method='jarowinkler',
+            threshold=0.85, label='BorrowerAddress' )
+#    compare.string('BorrowerCity', 'BorrowerCity', threshold=0.85, label='BorrowerCity' )
+    compare.exact('Zip5', 'Zip5', label='BorrowerZip' )
+    features = compare.compute(candidates, l1, l2)
+
+    print( f'MatchLoanDraws finished at {datetime.datetime.now().time():%H:%M:%S}' )
+    return features
+
+    # block by county - TOO slow
+    list_df = []
+    for index, row in loans[['StateAbb','COUNTYName']].drop_duplicates().iterrows(): 
+        st, cty = row[['StateAbb','COUNTYName']]
+
+        idx = (loans['StateAbb']==st) & (loans['COUNTYName']==cty)
+
+        l1 = loans[idx & (loans['ProcessingMethod']=='PPP')]
+        l2 = loans[idx & (loans['ProcessingMethod']=='PPS')]  #[['LoanNumber',id_cols,'CurrentApprovalAmount']]
+
+        indexer = recordlinkage.Index()
+        indexer.full()
+#    indexer.block(left_on='BorrowerState', right_on='BorrowerState')
+#        id_cols = ["LoanNumber","BorrowerCity", "StateAbb"]
+#        candidates = indexer.index(l1[id_cols], l2[id_cols])        
+        candidates = indexer.index(l1, l2)        
+        print( f'MatchLoanDraws for st {st}, cty {cty} at {datetime.datetime.now().time()}; Number of pairs to match: {len(candidates):,}' )
+  
+        # comparison
+        compare = recordlinkage.Compare()
+        # compare.exact('City', 'Provider City', label='City')
+        compare.string('BorrowerNameC', 'BorrowerNameC',
+            threshold=0.85, label='BorrowerNameC')
+        compare.string('BorrowerAddressC', 'BorrowerAddressC', # method='jarowinkler',
+            threshold=0.85 )
+        compare.string('BorrowerCityC', 'BorrowerCityC', threshold=0.85 )
+        compare.string('BorrowerZip', 'BorrowerZip', threshold=0.85 )
+        features = compare.compute(candidates, l1, l2)
+        list_df.append( features )
+
+        break
+    
+    return pd.concat(list_df)
     
     # unique zipcodes
     # lz = loans.assign( Zip5 = loans['BorrowerZip'].str.slice(start=0, stop=5) )
@@ -114,10 +171,10 @@ def MatchLoanDraws(loans):
 
     # return res
     
-def FilterLoans(loans):
-    # Keep only loans from 2021  
-    res = loans.assign( date = pd.to_datetime(loans['DateApproved']) )
-    return res[res['date'] > '2020-08-08']
+# def FilterLoans(loans):
+#     # Keep only loans from 2021  
+#     res = loans.assign( date = pd.to_datetime(loans['DateApproved']) )
+#     return res[res['date'] > '2020-08-08']
     
 def MatchCounties(loans, excsole, naics):
     # Add county info to each loan, first based on city 
@@ -248,14 +305,19 @@ def AddManualCounties(loans_y, excsole, naics):
         # adjusts 2-digit NAICS that are joint, e.g. NAICS 31-33 Manufacturing
         loansc = OverrideNAICS2(loansc)
 
-    # Number of loans per county and NAICS sector
-    loansum = loansc.groupby(['COUNTYfips',naics]).agg({'Zip5':'count'
-                                ,'CurrentApprovalAmount':'sum', 'JobsReported':'sum'})
-    loansum.columns=['NLoans','TotLoanAmount','TotJobsReported']
+    return loansc
 
+def AggregateLoans(loansc, naics):
+    # Number of loans per county and NAICS sector
+    tmp = loansc.assign( zipcity = loansc['Zip5'] + ', '+ loansc['cityc'] )
+#    loansum = tmp.groupby(['COUNTYfips',naics]).agg({'zipcity':'first', 'LoanNumber':'count','CurrentApprovalAmount':'sum', 'JobsReported':'sum'})
+    loansum = tmp.groupby(['COUNTYfips',naics]).agg(mod = ('zipcity', lambda x: x.value_counts().index[0]),
+                                        l=('LoanNumber','count'), c=('CurrentApprovalAmount','sum'), j=('JobsReported','sum') )
+    loansum.columns=['zipcity','NLoans','TotLoanAmount','TotJobsReported']
+    
     # debug
-    with pd.ExcelWriter('/Users/aligo/Downloads/tmp/ppp_loans_counts_2021.xlsx') as writer:
-        loansc.reset_index().to_excel(writer, sheet_name='loans')
+#    with pd.ExcelWriter('/Users/aligo/Downloads/tmp/ppp_loans_counts_2021.xlsx') as writer:
+#        loansc.reset_index().to_excel(writer, sheet_name='loans')
 
     return loansum
 
@@ -264,8 +326,9 @@ def CalcPenetration(loansum, cnt, naics):
     # Calculate PPP penetration from counts of loans and counties/sectors
     
     cnt = cnt.set_index(['COUNTYfips',naics])
-    tmp = loansum.reset_index().set_index(['COUNTYfips',naics])
+    assert loansum.index.duplicated().sum() == 0, "loansum index not unique"
     pen = cnt.join(loansum) #, rsuffix='loan')
+    assert pen.shape[0] == cnt.shape[0], "pen: join error"
     pen = pen.assign(penetration = pen['NLoans']/pen['NEstabs']
                  , AvgLoanAmount = pen['TotLoanAmount']/pen['NLoans']
                  , AvgJobsReported = pen['TotJobsReported']/pen['NLoans']
@@ -285,10 +348,12 @@ def CalcPenetration(loansum, cnt, naics):
     dfnaics['industry_title'] = dfnaics['industry_title'].str.replace('^NAICS \d+ ',''
                     , regex=True).str.replace('^NAICS \d\d-\d\d ','', regex=True)
     dfnaics.columns = [naics,'NAICSdescr']
+    assert dfnaics.index.duplicated().sum() == 0, "dfnaics index not unique"
+    tmp = pen.shape[0]
     pen = pen.reset_index().set_index(naics).join(dfnaics.set_index(naics)).reset_index()
+    assert pen.shape[0] == tmp, "pen: join error with NAICS description"
 
     # SAVE 
-    fpath = '/Users/aligo/Downloads/FEMA recovery data/PPP_loans_from_SBA/'
     idx = pen['NLoans'].isna()
     pen.loc[idx,'NLoans'] = 0
     pen.loc[idx,'penetration'] = 0
@@ -296,22 +361,12 @@ def CalcPenetration(loansum, cnt, naics):
     #pen[['State','COUNTYfips','COUNTYName','NAICS3','NAICSdescr'
     #     ,'NEstabs','NLoans','penetration']].to_csv(fpath + 'PPPpenetration.csv')
 
-    # FOR ARCGIS
-    pen['COUNTYName'] = pen['COUNTYName'] + ' County'
-    pen['Statefips'] = pen['COUNTYfips'].str[:2]
-    pen = pen.sort_values(by=['Statefips', 'COUNTYName',naics])
-    pen['OBJECTID'] = pen.reset_index().index + 1
-    with pd.ExcelWriter(fpath + 'PPPpenetration_' + naics + '.xlsx') as writer:
-        pen[['OBJECTID','State','COUNTYfips','COUNTYName',naics,'NAICSdescr','NEstabs','NLoans'
-              ,'penetration','AvgLoanAmount','AvgJobsReported','LoanAmtperEmp']
-                            ].to_excel(writer, sheet_name='PPP', index=False)
-
     # debug
-    fname = '/Users/aligo/Downloads/tmp/ppp_loans_counts.xlsx'
-    writer = pd.ExcelWriter(fname, engine = 'openpyxl')
-    cnt.reset_index().to_excel(writer, sheet_name='counts')
-    writer.save()
-    writer.close()
+#    fname = '/Users/aligo/Downloads/tmp/ppp_loans_counts.xlsx'
+#    writer = pd.ExcelWriter(fname, engine = 'openpyxl')
+#    cnt.reset_index().to_excel(writer, sheet_name='counts')
+#    writer.save()
+#    writer.close()
 
     # Summaries
 #    print('Total Number of PPP loans to New England with valid NAICS: ' + str(loansNE.shape[0]))
@@ -326,3 +381,79 @@ def CalcPenetration(loansum, cnt, naics):
     print('Previous Number with penetration = 0: ' + str(sum(pen['penetration'].isna())))
 
     return pen
+
+def CalcPenforScopes(loansc, naics, cnt):
+    # Subset scope of loans draws and calculate penetration
+    d1all = 'First draw (2020 and 2021)'
+    d1_21 = 'First draw (2020 only)'
+    d2 = 'Second draw (2021)'
+    d21all = 'Both draws (2021)'
+             # Name of set of loans : filter condition 
+    set_dict = { d1all:(loansc['ProcessingMethod']=='PPP')
+            , d1_21:((pd.to_datetime(loansc['DateApproved'])<'2021-01-01') & (loansc['ProcessingMethod']=='PPP'))
+            , d2:(loansc['ProcessingMethod']=='PPS')
+            , d21all:(pd.to_datetime(loansc['DateApproved'])>'2020-12-31') }
+    list_df = []
+    for key in set_dict:
+        print( f'*** {key} ***' )
+        # subset loans according to conditions above
+        loans_f = loansc[set_dict[key]]
+        # aggregate loans
+        loansum = AggregateLoans(loans_f, naics)
+        # Calculate penetration
+        tmp = CalcPenetration(loansum, cnt, naics).assign( scope = key )
+        list_df.append( tmp )
+
+    pen = pd.concat(list_df)
+
+    narows = pen['zipcity'].isna()
+    if narows.sum() > 0:
+        print( f'Penetration table: {narows.sum()} County-NAICS pairs with empty zipcode')
+        # Fill Zip of counties/Zip with no loans 
+        for index, row in pen[narows][['State','COUNTYfips']].drop_duplicates().iterrows(): 
+            st, cty = row[['State','COUNTYfips']]
+            # print( f'st {st}, cty {cty}')
+            idx = (pen['State']==st) & (pen['COUNTYfips']==cty)
+            zipvalid = pen[(~narows) & idx]['zipcity'].mode()[0]
+            pen.loc[narows & idx,'zipcity'] = zipvalid
+
+    narows = pen['zipcity'].isna()
+    print( f'Penetration table: {narows.sum()} County-NAICS pairs with empty zipcode')
+    
+    # change from 1st draw (2020+2021) to 2nd draw
+    pen_draw1 = pen[pen['scope']==d1all].set_index(['COUNTYfips',naics])
+    pen_draw2 = pen[pen['scope']==d2].set_index(['COUNTYfips',naics])[['penetration']]
+
+    pen_chg = pen_draw1.join( pen_draw2, how='outer', lsuffix='_1', rsuffix='_2' )
+    # change in penetration
+    pen_chg = pen_chg.assign( penetration = pen_chg['penetration_1'] - pen_chg['penetration_2']
+                        , scope = 'Reduction from First draw (2020 and 2021) to Second draw' ) \
+                    .drop( columns=['penetration_1','penetration_2'] ).reset_index()
+    
+    pen4 = pd.concat( [pen, pen_chg] )
+
+    # change from 2020 rounds to 2021
+    #set_dict['2020 to 2021 change'] = []
+
+    # FOR ARCGIS
+    pen4['COUNTYName'] = pen4['COUNTYName'] + ' County'
+    pen4['Statefips'] = pen4['COUNTYfips'].str[:2]
+    pen4 = pen4.sort_values(by=['scope','Statefips', 'COUNTYName',naics])
+    pen4[['Zip','City']] = pen4['zipcity'].str.split(',',expand=True)
+    pen4['Postal'] = pen4['zipcity'] + ', ' + pen4['State']    # .str.split(',',expand=True)
+    pen4['color'] = pen4['penetration']
+    pen4.loc[pen4['color'] > 1,'color'] = 1
+    pen4.loc[pen4['color'] < 0,'color'] = 0
+    pen4.loc[pen4['color'].isna(),'color'] = 1
+    pen4['size'] = pen4['NEstabs']
+    pen4.loc[pen4['size'] > 1000,'size'] = 1000
+#    pen4['penlabel'] = pd.Series([f'{val:.0%}' for val in pen4['penetration']], index = pen4.index)
+
+    colnames_dict = { 'scope':'scope of loans','State':'state','COUNTYfips':'county fips','COUNTYName':'county name','City':'city','Postal':'Postal'
+                 ,naics:'NAICS code','NAICSdescr':'subsector name','NEstabs':'number of establishments','NLoans':'number of loans'
+              ,'penetration':'PPP penetration','AvgLoanAmount':'average loan amount','AvgJobsReported':'average jobs reported','LoanAmtperEmp':'loan amount per employee'
+                 ,'color':'color (penetration or reduction in penetration)','size':'size (number of establishments)' }
+    pen4 = pen4[list(colnames_dict.keys())]
+    pen4.columns = list(colnames_dict.values())
+
+    return pen4   
