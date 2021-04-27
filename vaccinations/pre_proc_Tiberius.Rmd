@@ -105,7 +105,7 @@ for( vx in unique(dord$vax_manufacturer) ){
 }
 ```
 # Doses delivered per week per State and per Manufacturer
-```{r}
+```{r, fig.width = 7, fig.height = 4}
 vxordd <- vxord %>% 
           group_by( shipping_acl_awardee, vax_manufacturer, first_delivery_date ) %>%
           summarise( day_deliv = sum(doses_delivered), .groups='drop_last' ) %>% 
